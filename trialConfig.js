@@ -12,7 +12,7 @@
  * de conveniência para testes, não protecção criptográfica.
  */
 /** 30 de abril, 12:00 (horário de Brasília). */
-export const TRIAL_ENDS_AT_ISO = '2026-04-30T12:00:00-03:00';
+export const TRIAL_ENDS_AT_ISO = null;
 
 export function isBuildExpired() {
   if (TRIAL_ENDS_AT_ISO == null || String(TRIAL_ENDS_AT_ISO).trim() === '') {
