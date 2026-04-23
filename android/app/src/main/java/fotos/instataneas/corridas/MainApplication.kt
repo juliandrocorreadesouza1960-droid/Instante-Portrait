@@ -1,4 +1,4 @@
-package com.juliandro10.focomarketcapture
+package fotos.instataneas.corridas
 
 import android.app.Application
 import android.content.res.Configuration
@@ -54,3 +54,4 @@ class MainApplication : Application(), ReactApplication {
     ApplicationLifecycleDispatcher.onConfigurationChanged(this, newConfig)
   }
 }
+

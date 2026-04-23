@@ -1,4 +1,4 @@
-package com.juliandro10.focomarketcapture
+package fotos.instataneas.corridas
 
 import android.os.Build
 import android.os.Bundle
@@ -59,3 +59,4 @@ class MainActivity : ReactActivity() {
       super.invokeDefaultOnBackPressed()
   }
 }
+

@@ -89,9 +89,21 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.juliandro10.focomarketcapture'
+    namespace 'fotos.instataneas.corridas'
+    flavorDimensions "app"
+    productFlavors {
+        prod {
+            dimension "app"
+        }
+        enhance {
+            dimension "app"
+            // Permite instalar lado a lado (não sobrescreve o app principal)
+            applicationIdSuffix ".enhance"
+            versionNameSuffix "-enhance"
+        }
+    }
     defaultConfig {
-        applicationId 'com.juliandro10.focomarketcapture'
+        applicationId 'fotos.instataneas.corridas'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -170,7 +182,8 @@ android {
 android.applicationVariants.all { variant ->
     variant.outputs.configureEach { output ->
         if (variant.buildType.name == "release" && output.outputFileName != null && output.outputFileName.endsWith(".apk")) {
-            output.outputFileName = "INSTANTE PORTRAIT.apk"
+            def isEnhance = (variant.flavorName ?: "").toLowerCase().contains("enhance")
+            output.outputFileName = isEnhance ? "INSTANTE PORTRAIT (Enhance).apk" : "INSTANTE PORTRAIT.apk"
         }
     }
 }
