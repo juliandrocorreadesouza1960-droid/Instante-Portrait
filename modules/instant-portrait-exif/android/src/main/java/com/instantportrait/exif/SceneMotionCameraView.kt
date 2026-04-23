@@ -299,7 +299,7 @@ class SceneMotionCameraView(
   }
 
   /**
-   * [ImageCapture] com obturador ~1/1000 s (exposição manual) para congelar o movimento e suavizar trepidação.
+   * [ImageCapture] com obturador ~1/1700 s (exposição manual) para congelar o movimento e suavizar trepidação.
    */
   @OptIn(ExperimentalCamera2Interop::class)
   private fun buildSnapshotImageCapture(): ImageCapture {
@@ -331,9 +331,9 @@ class SceneMotionCameraView(
     private const val TAG = "SceneMotionCameraView"
 
     /**
-     * ~1/1000 s (nanosegundas). Cenas muito escuras exigem ISO mais alto noutro ajuste futuro.
+     * ~1/1700 s (1e9/1700 ns). Cenas muito escuras exigem ISO mais alto noutro ajuste futuro.
      */
-    private const val SNAPSHOT_EXPOSURE_NS: Long = 1_000_000L
+    private const val SNAPSHOT_EXPOSURE_NS: Long = 1_000_000_000L / 1700
 
     private const val SNAPSHOT_ISO: Int = 1000
   }
