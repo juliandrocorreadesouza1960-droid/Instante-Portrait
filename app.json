@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Instant Portrait",
+    "slug": "instant-portrait",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B1220"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-foreground.png",
+        "backgroundColor": "#0B1220"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.juliandro10.focomarketcapture"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

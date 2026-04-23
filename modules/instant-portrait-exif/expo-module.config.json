@@ -1,0 +1,9 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": [
+      "com.instantportrait.exif.InstantPortraitExifModule",
+      "com.instantportrait.exif.InstantPortraitSceneMotionModule"
+    ]
+  }
+}

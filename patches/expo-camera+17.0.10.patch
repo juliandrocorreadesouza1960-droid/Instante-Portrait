@@ -1,0 +1,68 @@
+diff --git a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
+index fc56526..0372026 100644
+--- a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
++++ b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
+@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
+ import android.graphics.Color
+ import android.graphics.ImageFormat
+ import android.graphics.SurfaceTexture
++import android.hardware.camera2.CaptureRequest
+ import android.hardware.camera2.CameraCharacteristics
+ import android.media.AudioManager
+ import android.media.MediaActionSound
+@@ -20,6 +21,7 @@ import android.view.ViewGroup
+ import androidx.annotation.OptIn
+ import androidx.appcompat.app.AppCompatActivity
+ import androidx.camera.camera2.interop.Camera2CameraInfo
++import androidx.camera.camera2.interop.Camera2Interop
+ import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+ import androidx.camera.core.Camera
+ import androidx.camera.core.CameraInfo
+@@ -444,10 +446,14 @@ class ExpoCameraView(
+       .requireLensFacing(lensFacing.mapToCharacteristic())
+       .build()
+ 
+-    imageCaptureUseCase = ImageCapture.Builder()
+-      .setResolutionSelector(resolutionSelector)
+-      .setFlashMode(flashMode.mapToLens())
+-      .build()
++    imageCaptureUseCase = if (flashMode == FlashMode.OFF) {
++      createStillImageCaptureWithFastShutter(resolutionSelector)
++    } else {
++      ImageCapture.Builder()
++        .setResolutionSelector(resolutionSelector)
++        .setFlashMode(flashMode.mapToLens())
++        .build()
++    }
+ 
+     val videoCapture = createVideoCapture()
+     imageAnalysisUseCase = createImageAnalyzer()
+@@ -482,6 +488,28 @@ class ExpoCameraView(
+     }
+   }
+ 
++  /**
++   * Obturador curto (~1/1000 s) via Camera2, para reduzir desfoque por movimento/trepidação.
++   * Só aplica com flash desligado; com flash, o [ImageCapture] padrão costuma ser necessário para o sync do disparo.
++   */
++  @OptIn(ExperimentalCamera2Interop::class)
++  private fun createStillImageCaptureWithFastShutter(
++    resolutionSelector: ResolutionSelector
++  ): ImageCapture {
++    val builder = ImageCapture.Builder()
++      .setResolutionSelector(resolutionSelector)
++      .setFlashMode(flashMode.mapToLens())
++    val ext = Camera2Interop.Extender(builder)
++    val exposureNs = 1_000_000L
++    val iso = 1000
++    ext.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
++    ext.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, exposureNs)
++    ext.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, iso)
++    val frameNs = (exposureNs * 2).coerceAtLeast(1_000_000L)
++    ext.setCaptureRequestOption(CaptureRequest.SENSOR_FRAME_DURATION, frameNs)
++    return builder.build()
++  }
++
+   private fun createImageAnalyzer(): ImageAnalysis =
+     ImageAnalysis.Builder()
+       .setResolutionSelector(
