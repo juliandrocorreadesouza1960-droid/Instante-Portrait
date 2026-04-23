@@ -2,6 +2,7 @@ import React from 'react';
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core';
 
 const InstantPortraitExif = requireNativeModule('InstantPortraitExif');
+const InstantPortraitSceneMotion = requireNativeModule('InstantPortraitSceneMotion');
 
 const NativeSceneMotionView = requireNativeViewManager('InstantPortraitSceneMotion');
 
@@ -42,6 +43,22 @@ export async function openInstantPortraitFolderAsync(which) {
   return InstantPortraitExif.openInstantPortraitFolderAsync(which);
 }
 
+export async function setSnapshotExposureNsAsync(exposureNs) {
+  return InstantPortraitSceneMotion.setSnapshotExposureNsAsync(exposureNs);
+}
+
+export async function getSnapshotExposureNsAsync() {
+  return InstantPortraitSceneMotion.getSnapshotExposureNsAsync();
+}
+
+export async function setSnapshotIsoAsync(iso) {
+  return InstantPortraitSceneMotion.setSnapshotIsoAsync(iso);
+}
+
+export async function getSnapshotIsoAsync() {
+  return InstantPortraitSceneMotion.getSnapshotIsoAsync();
+}
+
 export default {
   writeExifAsync,
   saveJpegToGalleryAsync,
@@ -50,5 +67,9 @@ export default {
   pingAsync,
   deleteFileAsync,
   openInstantPortraitFolderAsync,
+  setSnapshotExposureNsAsync,
+  getSnapshotExposureNsAsync,
+  setSnapshotIsoAsync,
+  getSnapshotIsoAsync,
   SceneMotionCameraView,
 };

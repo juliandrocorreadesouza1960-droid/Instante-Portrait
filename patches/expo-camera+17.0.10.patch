@@ -1,5 +1,5 @@
 diff --git a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
-index fc56526..0372026 100644
+index fc56526..1a3c8c5 100644
 --- a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
 +++ b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
 @@ -7,6 +7,7 @@ import android.content.pm.PackageManager
@@ -37,12 +37,12 @@ index fc56526..0372026 100644
  
      val videoCapture = createVideoCapture()
      imageAnalysisUseCase = createImageAnalyzer()
-@@ -482,6 +488,28 @@ class ExpoCameraView(
+@@ -482,6 +488,29 @@ class ExpoCameraView(
      }
    }
  
 +  /**
-+   * Obturador curto (~1/1700 s) via Camera2, para reduzir desfoque por movimento/trepidação.
++   * Obturador curto (~1/1000 s) via Camera2, para reduzir desfoque por movimento/trepidação.
 +   * Só aplica com flash desligado; com flash, o [ImageCapture] padrão costuma ser necessário para o sync do disparo.
 +   */
 +  @OptIn(ExperimentalCamera2Interop::class)
@@ -53,8 +53,9 @@ index fc56526..0372026 100644
 +      .setResolutionSelector(resolutionSelector)
 +      .setFlashMode(flashMode.mapToLens())
 +    val ext = Camera2Interop.Extender(builder)
-+    val exposureNs = 1_000_000_000L / 1700
-+    val iso = 1000
++    val prefs = context.getSharedPreferences("instant_portrait_prefs", android.content.Context.MODE_PRIVATE)
++    val exposureNs = prefs.getLong("snapshotExposureNs", 1_000_000_000L / 1000)
++    val iso = prefs.getInt("snapshotIso", 1800)
 +    ext.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
 +    ext.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, exposureNs)
 +    ext.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, iso)

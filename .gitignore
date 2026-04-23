@@ -45,5 +45,8 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# local UI mocks
+ui-mock-premium*.html
+
 # Native project folders are committed (custom modules + Gradle).
 # Do not ignore /android or /ios here.

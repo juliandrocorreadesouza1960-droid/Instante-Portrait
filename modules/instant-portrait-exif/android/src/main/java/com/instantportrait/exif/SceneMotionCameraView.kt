@@ -2,6 +2,7 @@ package com.instantportrait.exif
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.hardware.camera2.CaptureRequest
 import android.net.Uri
 import android.util.Log
@@ -67,6 +68,21 @@ class SceneMotionCameraView(
   private var bindOwnerRetryCount = 0
 
   @Volatile
+  private var snapshotExposureNs: Long = readSnapshotExposureNs(context)
+
+  @Volatile
+  private var snapshotIso: Int = readSnapshotIso(context)
+
+  @Volatile
+  private var autoExposureEnabled: Boolean = readAutoExposureEnabled(context)
+
+  @Volatile
+  private var bindingInFlight: Boolean = false
+
+  @Volatile
+  private var rebindScheduled: Boolean = false
+
+  @Volatile
   private var analysisActive = false
 
   @Volatile
@@ -74,6 +90,12 @@ class SceneMotionCameraView(
 
   private var lastGrid: IntArray? = null
   private var lastCaptureAt = 0L
+
+  @Volatile
+  private var lastMeanLuma: Int = 255
+
+  @Volatile
+  private var darkPreviewStreak: Int = 0
 
   @Volatile
   private var snapshotInFlight = false
@@ -84,9 +106,27 @@ class SceneMotionCameraView(
 
   private val analyzer = ImageAnalysis.Analyzer { image ->
     try {
-      if (!analysisActive) return@Analyzer
       val score = computeMeanLumaDiff(image)
       if (score < 0f) return@Analyzer
+
+      // Se o preview estiver preto (subexposição severa) com exposição manual,
+      // troca para auto-exposição e rebind, sem depender de disparo/foto.
+      if (!autoExposureEnabled) {
+        if (lastMeanLuma <= 10) {
+          darkPreviewStreak++
+        } else {
+          darkPreviewStreak = 0
+        }
+        if (darkPreviewStreak >= 8) {
+          darkPreviewStreak = 0
+          autoExposureEnabled = true
+          writeAutoExposureEnabled(context, true)
+          scheduleRebind()
+          return@Analyzer
+        }
+      }
+
+      if (!analysisActive) return@Analyzer
 
       val th = when (sensitivityLevel) {
         1 -> 6.5f
@@ -122,6 +162,7 @@ class SceneMotionCameraView(
     val gh = (h + step - 1) / step
     val grid = IntArray(gw * gh)
     var gi = 0
+    var meanSum = 0L
     var yy = 0
     while (yy < h) {
       var xx = 0
@@ -129,11 +170,15 @@ class SceneMotionCameraView(
         val x = xx.coerceAtMost(w - 1)
         val y = yy.coerceAtMost(h - 1)
         val off = y * rowStride + x * pixelStride
-        grid[gi++] = buf.get(off).toInt() and 0xFF
+        val v = buf.get(off).toInt() and 0xFF
+        grid[gi++] = v
+        meanSum += v.toLong()
         xx += step
       }
       yy += step
     }
+
+    lastMeanLuma = if (gi <= 0) 255 else (meanSum / gi.toLong()).toInt()
 
     val prev = lastGrid
     lastGrid = grid.copyOf()
@@ -161,6 +206,17 @@ class SceneMotionCameraView(
       object : ImageCapture.OnImageSavedCallback {
         override fun onImageSaved(output: ImageCapture.OutputFileResults) {
           snapshotInFlight = false
+          // Fallback automático: se a exposição manual gerar um JPEG praticamente preto,
+          // troca para auto-exposição (AE ON) e rebind.
+          if (!autoExposureEnabled) {
+            val mean = runCatching { estimateMeanLumaFromJpeg(outFile.absolutePath) }.getOrDefault(255)
+            if (mean in 0..18) {
+              autoExposureEnabled = true
+              writeAutoExposureEnabled(context, true)
+              onSceneError(mapOf("message" to "autoExposureFallback"))
+              scheduleRebind()
+            }
+          }
           val uriStr = Uri.fromFile(outFile).toString()
           onScenePhoto(mapOf("uri" to uriStr))
         }
@@ -186,6 +242,35 @@ class SceneMotionCameraView(
     }
   }
 
+  fun setSnapshotExposureNs(ns: Long) {
+    val clamped = ns.coerceIn(100_000L, 100_000_000L) // ~1/10_000s .. ~1/10s
+    if (snapshotExposureNs == clamped) return
+    snapshotExposureNs = clamped
+    writeSnapshotExposureNs(context, clamped)
+    scheduleRebind()
+  }
+
+  fun setSnapshotIso(iso: Int) {
+    val clamped = iso.coerceIn(100, 6400)
+    if (snapshotIso == clamped) return
+    snapshotIso = clamped
+    writeSnapshotIso(context, clamped)
+    scheduleRebind()
+  }
+
+  private fun scheduleRebind() {
+    if (rebindScheduled) return
+    rebindScheduled = true
+    postDelayed(
+      {
+        rebindScheduled = false
+        cleanupCamera()
+        bindCameraIfNeeded()
+      },
+      150L
+    )
+  }
+
   fun setAnalysisActive(active: Boolean) {
     analysisActive = active
     if (!active) {
@@ -198,6 +283,7 @@ class SceneMotionCameraView(
     lastGrid = null
     snapshotInFlight = false
     bindOwnerRetryCount = 0
+    bindingInFlight = false
     synchronized(this) {
       runCatching { cameraProvider?.unbindAll() }
       bound = false
@@ -219,6 +305,7 @@ class SceneMotionCameraView(
   private fun bindCameraIfNeeded() {
     synchronized(this) {
       if (bound) return
+      if (bindingInFlight) return
       if (width < 2 || height < 2) return
     }
     val owner = lifecycleOwner() ?: run {
@@ -240,6 +327,7 @@ class SceneMotionCameraView(
           synchronized(this@SceneMotionCameraView) {
             if (bound) return@addListener
           }
+          bindingInFlight = true
           val provider = future.get()
           cameraProvider = provider
 
@@ -266,8 +354,10 @@ class SceneMotionCameraView(
           synchronized(this@SceneMotionCameraView) {
             bound = true
           }
+          bindingInFlight = false
           onSceneReady(mapOf("ok" to true))
         } catch (e: Exception) {
+          bindingInFlight = false
           Log.e(TAG, "bindCamera", e)
           onSceneError(mapOf("message" to (e.message ?: "bindCamera")))
         }
@@ -298,43 +388,97 @@ class SceneMotionCameraView(
     super.onDetachedFromWindow()
   }
 
-  /**
-   * [ImageCapture] com obturador ~1/1700 s (exposição manual) para congelar o movimento e suavizar trepidação.
-   */
+  /** [ImageCapture] com obturador curto (exposição manual) para congelar o movimento. */
   @OptIn(ExperimentalCamera2Interop::class)
   private fun buildSnapshotImageCapture(): ImageCapture {
     val b = ImageCapture.Builder()
       .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
       .setJpegQuality(92)
     val ext = Camera2Interop.Extender(b)
-    ext.setCaptureRequestOption(
-      CaptureRequest.CONTROL_AE_MODE,
-      CaptureRequest.CONTROL_AE_MODE_OFF
-    )
-    ext.setCaptureRequestOption(
-      CaptureRequest.SENSOR_EXPOSURE_TIME,
-      SNAPSHOT_EXPOSURE_NS
-    )
-    ext.setCaptureRequestOption(
-      CaptureRequest.SENSOR_SENSITIVITY,
-      SNAPSHOT_ISO
-    )
-    val frameNs = (SNAPSHOT_EXPOSURE_NS * 2).coerceAtLeast(1_000_000L)
-    ext.setCaptureRequestOption(
-      CaptureRequest.SENSOR_FRAME_DURATION,
-      frameNs
-    )
+    if (autoExposureEnabled) {
+      ext.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+    } else {
+      ext.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+      ext.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, snapshotExposureNs)
+      ext.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, snapshotIso)
+      val frameNs = (snapshotExposureNs * 2).coerceAtLeast(1_000_000L)
+      ext.setCaptureRequestOption(CaptureRequest.SENSOR_FRAME_DURATION, frameNs)
+    }
     return b.build()
   }
 
   companion object {
     private const val TAG = "SceneMotionCameraView"
 
-    /**
-     * ~1/1700 s (1e9/1700 ns). Cenas muito escuras exigem ISO mais alto noutro ajuste futuro.
-     */
-    private const val SNAPSHOT_EXPOSURE_NS: Long = 1_000_000_000L / 1700
+    private const val PREFS = "instant_portrait_prefs"
+    private const val KEY_EXPOSURE_NS = "snapshotExposureNs"
+    private const val KEY_ISO = "snapshotIso"
+    private const val KEY_AUTO_EXPOSURE = "snapshotAutoExposure"
+    private const val DEFAULT_EXPOSURE_NS: Long = 1_000_000_000L / 1000 // 1/1000s
+    private const val DEFAULT_ISO: Int = 1800
 
-    private const val SNAPSHOT_ISO: Int = 1000
+    private fun prefs(ctx: Context) =
+      ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    fun readSnapshotExposureNs(ctx: Context): Long {
+      val v = runCatching { prefs(ctx).getLong(KEY_EXPOSURE_NS, DEFAULT_EXPOSURE_NS) }
+        .getOrDefault(DEFAULT_EXPOSURE_NS)
+      return v.coerceIn(100_000L, 100_000_000L)
+    }
+
+    fun writeSnapshotExposureNs(ctx: Context, ns: Long) {
+      runCatching {
+        prefs(ctx).edit().putLong(KEY_EXPOSURE_NS, ns).apply()
+      }
+    }
+
+    fun readSnapshotIso(ctx: Context): Int {
+      val v = runCatching { prefs(ctx).getInt(KEY_ISO, DEFAULT_ISO) }.getOrDefault(DEFAULT_ISO)
+      return v.coerceIn(100, 6400)
+    }
+
+    fun writeSnapshotIso(ctx: Context, iso: Int) {
+      runCatching {
+        prefs(ctx).edit().putInt(KEY_ISO, iso.coerceIn(100, 6400)).apply()
+      }
+    }
+
+    fun readAutoExposureEnabled(ctx: Context): Boolean {
+      return runCatching { prefs(ctx).getBoolean(KEY_AUTO_EXPOSURE, false) }.getOrDefault(false)
+    }
+
+    fun writeAutoExposureEnabled(ctx: Context, enabled: Boolean) {
+      runCatching { prefs(ctx).edit().putBoolean(KEY_AUTO_EXPOSURE, enabled).apply() }
+    }
+
+    private fun estimateMeanLumaFromJpeg(path: String): Int {
+      val opts = BitmapFactory.Options().apply {
+        inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+        inSampleSize = 16
+      }
+      val bmp = BitmapFactory.decodeFile(path, opts) ?: return 255
+      val w = bmp.width.coerceAtLeast(1)
+      val h = bmp.height.coerceAtLeast(1)
+      val stepX = (w / 24).coerceAtLeast(1)
+      val stepY = (h / 24).coerceAtLeast(1)
+      var sum = 0L
+      var count = 0L
+      var y = 0
+      while (y < h) {
+        var x = 0
+        while (x < w) {
+          val c = bmp.getPixel(x, y)
+          val r = (c shr 16) and 0xFF
+          val g = (c shr 8) and 0xFF
+          val b = c and 0xFF
+          sum += (r + g + b) / 3
+          count++
+          x += stepX
+        }
+        y += stepY
+      }
+      bmp.recycle()
+      return if (count <= 0L) 255 else (sum / count).toInt()
+    }
   }
 }

@@ -1,15 +1,21 @@
 import { StatusBar } from 'expo-status-bar';
 import * as Camera from 'expo-camera';
+import * as FileSystem from 'expo-file-system';
 import * as Location from 'expo-location';
 import { useKeepAwake } from 'expo-keep-awake';
+import { iapEndAsync, iapGetActiveEntitlementAsync, iapInitAsync, iapLoadSubscriptionsAsync, iapRequestSubAsync, IAP_SKUS } from './iap';
 import {
   analyzeImageAsync,
   deleteFileAsync,
+  getSnapshotExposureNsAsync,
+  getSnapshotIsoAsync,
   moveInGalleryAsync,
   openInstantPortraitFolderAsync,
   pingAsync,
   saveJpegToGalleryAsync,
   SceneMotionCameraView,
+  setSnapshotExposureNsAsync,
+  setSnapshotIsoAsync,
 } from 'instant-portrait-exif';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -22,6 +28,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useColorScheme,
   View,
 } from 'react-native';
 
@@ -32,22 +39,42 @@ const CAPTURE_MODES = {
 
 /** Intervalo de cadência (modo Tempo) e mínimo entre disparos (modo Movimento). */
 const INTERVAL_CHOICES_MS = [500, 1000, 1500, 2000];
+const SHUTTER_CHOICES = [500, 1000, 1500];
+const FREE_PHOTO_LIMIT = 200;
 
-function formatIntervalLabel(ms) {
-  if (ms === 500) return '0,5s';
+function formatIntervalLabel(ms, lang) {
+  if (ms === 500) return lang === 'en' ? '0.5s' : '0,5s';
   return `${ms / 1000}s`;
 }
 
 /** Texto curto do cabeçalho: ritmo (modo tempo) ou intervalo mínimo (cena). */
-function headerCadenceLine(mode, intervalMs, motionMinIntervalMs) {
+function headerCadenceLine(mode, intervalMs, motionMinIntervalMs, lang) {
   if (mode === CAPTURE_MODES.MOTION) {
-    return `Mín. ${formatIntervalLabel(motionMinIntervalMs)} entre fotos na cena`;
+    return lang === 'en'
+      ? `Min. ${formatIntervalLabel(motionMinIntervalMs, lang)} between scene shots`
+      : `Mín. ${formatIntervalLabel(motionMinIntervalMs, lang)} entre fotos na cena`;
+  }
+  if (lang === 'en') {
+    if (intervalMs === 1000) return '1 photo per second';
+    return `1 photo every ${formatIntervalLabel(intervalMs, lang)}`;
   }
   if (intervalMs === 1000) return '1 foto por segundo';
   if (intervalMs === 500) return '1 foto a cada 0,5 s';
   if (intervalMs === 1500) return '1 foto a cada 1,5 s';
   if (intervalMs === 2000) return '1 foto a cada 2 s';
-  return `1 foto a cada ${formatIntervalLabel(intervalMs)}`;
+  return `1 foto a cada ${formatIntervalLabel(intervalMs, lang)}`;
+}
+
+function exposureNsFromShutterDenom(denom) {
+  return Math.round(1_000_000_000 / Number(denom || 1000));
+}
+
+function isoFromShutterDenom(denom) {
+  // Indoor-friendly defaults (ainda pode ficar escuro em ambiente muito fechado).
+  if (denom === 1500) return 2400;
+  if (denom === 1000) return 1800;
+  if (denom === 500) return 1200;
+  return 1800;
 }
 
 /** Card com filete de destaque no topo (estilo apps esportivos / PULSO). */
@@ -74,6 +101,8 @@ function StatRowCard({ children, s }) {
 
 export default function App() {
   useKeepAwake();
+
+  const systemScheme = useColorScheme();
 
   const cameraRef = useRef(null);
   const timerRef = useRef(null);
@@ -119,6 +148,15 @@ export default function App() {
   const [rejectedCount, setRejectedCount] = useState(0);
   const [screen, setScreen] = useState('config'); // 'config' | 'capture'
 
+  // Preferências
+  const [language, setLanguage] = useState('pt-BR'); // fixo (sem seletor na UI)
+  const themeMode = 'system'; // sempre segue o sistema (sem seletor na UI)
+  const [shutterDenom, setShutterDenom] = useState(1000); // 500 | 1000 | 1500
+  const [isPremium, setIsPremium] = useState(false);
+  const [subs, setSubs] = useState([]);
+  const [totalPhotos, setTotalPhotos] = useState(0);
+  const [showPaywall, setShowPaywall] = useState(false);
+
   const [pictureSizes, setPictureSizes] = useState([]);
   const [selectedPictureSize, setSelectedPictureSize] = useState(null);
   const [selectedRatio, setSelectedRatio] = useState(null);
@@ -140,6 +178,155 @@ export default function App() {
   const uploadMinWidthPx = 3450;
   const uploadMinHeightPx = 2300;
 
+  const lang = 'pt-BR';
+
+  const t = useCallback(
+    (key) => {
+      const dict = {
+        'pt-BR': {
+          interval: 'Intervalo',
+          scene: 'Por movimento',
+          photos: 'Fotos',
+          tapForFolders: 'tocar p/ pastas',
+          preparing: 'A preparar permissões…',
+          permissionsNeeded: 'Permissões necessárias',
+          grantCamera: 'Conceda acesso à câmara para poder usar a captura.',
+          grantPermissions: 'Conceder permissões',
+          capture: 'Modo',
+          mode: 'Modo',
+          byTime: 'Por tempo',
+          sceneMode: 'Por movimento',
+          intervalLabel: 'Intervalo',
+          minBetweenShots: 'Mín. entre disparos',
+          sensitivity: 'Sensibilidade',
+          low: 'Baixa',
+          normal: 'Normal',
+          high: 'Alta',
+          filteringOptional: 'Filtragem',
+          automaticInline: '',
+          off: 'Desligada',
+          on: 'Ligada',
+          noPeople: 'Sem pessoas',
+          blurry: 'Embaçada',
+          lastSession: 'Última sessão',
+          goodPhotos: 'Fotos boas',
+          discard: 'Descartar',
+          error: 'Erro',
+          openViewfinder: 'Abrir visor',
+          start: 'Iniciar',
+          stop: 'Parar',
+          config: 'Config',
+          preferences: 'Preferências',
+          shutter: 'Obturador (congela movimento)',
+          language: '',
+          portuguese: '',
+          english: '',
+          theme: '',
+          followSystem: '',
+          dark: '',
+          light: '',
+          gallery: 'Galeria',
+          openWhichFolder: 'Abrir qual pasta no armazenamento?',
+          goodFolder: 'Fotos boas',
+          discardFolder: 'Descartar',
+          cancel: 'Cancelar',
+        },
+        en: {
+          interval: 'Interval',
+          scene: 'Motion',
+          photos: 'Photos',
+          tapForFolders: 'tap for folders',
+          preparing: 'Preparing permissions…',
+          permissionsNeeded: 'Permissions required',
+          grantCamera: 'Grant camera access to use capture.',
+          grantPermissions: 'Grant permissions',
+          capture: 'Mode',
+          mode: 'Mode',
+          byTime: 'By time',
+          sceneMode: 'Motion',
+          intervalLabel: 'Interval',
+          minBetweenShots: 'Min between shots',
+          sensitivity: 'Sensitivity',
+          low: 'Low',
+          normal: 'Normal',
+          high: 'High',
+          filteringOptional: 'Filtering',
+          automaticInline: '',
+          off: 'Off',
+          on: 'On',
+          noPeople: 'No people',
+          blurry: 'Blurry',
+          lastSession: 'Last session',
+          goodPhotos: 'Good photos',
+          discard: 'Discard',
+          error: 'Error',
+          openViewfinder: 'Open viewfinder',
+          start: 'Start',
+          stop: 'Stop',
+          config: 'Config',
+          preferences: 'Preferences',
+          shutter: 'Shutter (freeze motion)',
+          language: '',
+          portuguese: '',
+          english: '',
+          theme: '',
+          followSystem: '',
+          dark: '',
+          light: '',
+          gallery: 'Gallery',
+          openWhichFolder: 'Open which folder?',
+          goodFolder: 'Good photos',
+          discardFolder: 'Discard',
+          cancel: 'Cancel',
+        },
+      };
+      return dict[lang]?.[key] ?? dict['pt-BR'][key] ?? key;
+    },
+    [lang]
+  );
+
+  const effectiveTheme = useMemo(() => {
+    if (themeMode === 'dark') return 'dark';
+    if (themeMode === 'light') return 'light';
+    return systemScheme === 'light' ? 'light' : 'dark';
+  }, [themeMode, systemScheme]);
+
+  const C = useMemo(() => {
+    if (effectiveTheme === 'light') {
+      return {
+        bg: '#F5F7FB',
+        surface: '#FFFFFF',
+        card: '#FFFFFF',
+        border: 'rgba(0,0,0,0.10)',
+        text: '#0B1020',
+        textMuted: '#5B667A',
+        accent: '#FF6B2C',
+        accentDim: 'rgba(255, 107, 44, 0.12)',
+        accentBorder: 'rgba(255, 140, 90, 0.55)',
+        pillBg: 'rgba(0,0,0,0.04)',
+      };
+    }
+    return {
+      bg: '#070A0F',
+      surface: '#0E141C',
+      card: '#111824',
+      border: 'rgba(255,255,255,0.08)',
+      text: '#F1F4FA',
+      textMuted: '#8B99AD',
+      accent: '#FF6B2C',
+      accentDim: 'rgba(255, 107, 44, 0.18)',
+      accentBorder: 'rgba(255, 140, 90, 0.45)',
+      pillBg: 'rgba(255,255,255,0.05)',
+    };
+  }, [effectiveTheme]);
+
+  const styles = useMemo(() => makeStyles(C), [C]);
+
+  const settingsPath = useMemo(() => {
+    const base = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+    return `${base}instant_portrait_settings.json`;
+  }, []);
+
   const hasAllPermissions = useMemo(() => {
     return Boolean(
       cameraPermission?.granted &&
@@ -154,6 +341,41 @@ export default function App() {
     async function bootstrap() {
       setLastError(null);
       setCameraIsReady(false);
+
+      // Preferências persistidas (não dependem de permissões)
+      try {
+        const raw = await FileSystem.readAsStringAsync(settingsPath);
+        const parsed = JSON.parse(raw || '{}');
+        if (parsed?.language === 'en' || parsed?.language === 'pt-BR') setLanguage(parsed.language);
+        if (parsed?.themeMode === 'system' || parsed?.themeMode === 'dark' || parsed?.themeMode === 'light')
+          setThemeMode(parsed.themeMode);
+        if (SHUTTER_CHOICES.includes(parsed?.shutterDenom)) setShutterDenom(parsed.shutterDenom);
+        if (Number.isFinite(Number(parsed?.totalPhotos))) setTotalPhotos(Number(parsed.totalPhotos));
+      } catch (_) {
+        // ok: primeira execução (sem arquivo)
+      }
+
+      // IAP
+      try {
+        await iapInitAsync();
+        const list = await iapLoadSubscriptionsAsync();
+        setSubs(Array.isArray(list) ? list : []);
+        const entitled = await iapGetActiveEntitlementAsync();
+        setIsPremium(Boolean(entitled));
+      } catch (_) {
+        // sem billing ainda (ex.: emulador/ambiente)
+      }
+
+      // Mantém o SharedPreferences preparado pro expo-camera (patch lê esse valor)
+      try {
+        const exposureNs = exposureNsFromShutterDenom(shutterDenom);
+        await setSnapshotExposureNsAsync(exposureNs);
+        await setSnapshotIsoAsync(isoFromShutterDenom(shutterDenom));
+        await getSnapshotExposureNsAsync().catch(() => null);
+        await getSnapshotIsoAsync().catch(() => null);
+      } catch (_) {
+        // ok
+      }
 
       const cam = await requestCameraPermission();
       // não bloqueia se o usuário negar; a gente salva sem GPS
@@ -173,8 +395,27 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      iapEndAsync().catch(() => null);
     };
-  }, [requestCameraPermission, requestLocationPermission]);
+  }, [requestCameraPermission, requestLocationPermission, settingsPath, shutterDenom]);
+
+  // Persistência simples (arquivo JSON) — salva sempre que alterar preferências.
+  useEffect(() => {
+    const payload = JSON.stringify({ language, themeMode, shutterDenom, totalPhotos });
+    FileSystem.writeAsStringAsync(settingsPath, payload).catch(() => null);
+  }, [language, themeMode, shutterDenom, totalPhotos, settingsPath]);
+
+  // Atualiza o obturador nativo (SharedPreferences) quando mudar no JS.
+  useEffect(() => {
+    const exposureNs = exposureNsFromShutterDenom(shutterDenom);
+    setSnapshotExposureNsAsync(exposureNs).catch(() => null);
+    setSnapshotIsoAsync(isoFromShutterDenom(shutterDenom)).catch(() => null);
+    // No modo Intervalo (expo-camera), o ImageCapture é criado na montagem da câmera:
+    // remonta o preview para pegar o valor novo.
+    if (screen === 'capture' && mode === CAPTURE_MODES.TIME) {
+      setCameraKey((k) => k + 1);
+    }
+  }, [shutterDenom, screen, mode]);
 
   useEffect(() => {
     // Sempre que remonta a câmera, volta para "não pronta"
@@ -370,6 +611,7 @@ export default function App() {
     if (!isRunningRef.current) return;
     setLastError(null);
     setShotCount((c) => c + 1);
+    setTotalPhotos((n) => n + 1);
     if (typeof dispMs === 'number' && !Number.isNaN(dispMs)) {
       setLastShotMs(dispMs);
     }
@@ -499,6 +741,11 @@ export default function App() {
   }
 
   async function startIntervalCapture() {
+    if (!isPremium && totalPhotos >= FREE_PHOTO_LIMIT) {
+      setLastError('Limite do teste grátis atingido. Assine o Premium para continuar.');
+      setShowPaywall(true);
+      return;
+    }
     if (isCapturing || isRunningRef.current) return;
     isRunningRef.current = true;
     setShotCount(0);
@@ -569,6 +816,11 @@ export default function App() {
   }
 
   async function startMotionCapture() {
+    if (!isPremium && totalPhotos >= FREE_PHOTO_LIMIT) {
+      setLastError('Limite do teste grátis atingido. Assine o Premium para continuar.');
+      setShowPaywall(true);
+      return;
+    }
     if (isCapturing || isRunningRef.current) return;
     isRunningRef.current = true;
     setShotCount(0);
@@ -649,59 +901,81 @@ export default function App() {
 
   const canStart = ready && hasAllPermissions && cameraIsReady && !isCapturing;
   const canStop = isCapturing;
+  const freeRemaining = Math.max(0, FREE_PHOTO_LIMIT - totalPhotos);
+
+  async function tryBuy(productId) {
+    try {
+      await iapRequestSubAsync(productId);
+      const entitled = await iapGetActiveEntitlementAsync();
+      setIsPremium(Boolean(entitled));
+      if (entitled) setShowPaywall(false);
+    } catch (e) {
+      setLastError(String(e?.message ?? e));
+    }
+  }
 
   const showGalleryFolders = useCallback(() => {
     if (Platform.OS !== 'android') {
       Alert.alert(
-        'Galeria',
-        'Neste dispositivo, abra a app de fotos e procure o álbum ou pasta do Instant Portrait.'
+        t('gallery'),
+        lang === 'en'
+          ? 'On this device, open your photos app and look for the Instant Portrait album/folder.'
+          : 'Neste dispositivo, abra a app de fotos e procure o álbum ou pasta do Instant Portrait.'
       );
       return;
     }
-    Alert.alert('Galeria', 'Abrir qual pasta no armazenamento?', [
+    Alert.alert(t('gallery'), t('openWhichFolder'), [
       {
-        text: 'Fotos boas',
+        text: t('goodFolder'),
         onPress: () => {
           openInstantPortraitFolderAsync('kept')
             .then((r) => {
               if (r && r.ok === false) {
                 Alert.alert(
-                  'Galeria',
-                  'Não foi possível abrir a pasta automaticamente. No telefone, abra a galeria e localize DCIM/Instant Portrait.'
+                  t('gallery'),
+                  lang === 'en'
+                    ? "Couldn't open automatically. In the gallery, find DCIM/Instant Portrait."
+                    : 'Não foi possível abrir a pasta automaticamente. No telefone, abra a galeria e localize DCIM/Instant Portrait.'
                 );
               }
             })
             .catch(() => {
               Alert.alert(
-                'Galeria',
-                'Não foi possível abrir a pasta. Procure a pasta DCIM/Instant Portrait na galeria de fotos.'
+                t('gallery'),
+                lang === 'en'
+                  ? "Couldn't open the folder. Find DCIM/Instant Portrait in your gallery."
+                  : 'Não foi possível abrir a pasta. Procure a pasta DCIM/Instant Portrait na galeria de fotos.'
               );
             });
         },
       },
       {
-        text: 'Descartar',
+        text: t('discardFolder'),
         onPress: () => {
           openInstantPortraitFolderAsync('rejected')
             .then((r) => {
               if (r && r.ok === false) {
                 Alert.alert(
-                  'Galeria',
-                  'Não foi possível abrir a pasta. Procure DCIM/Instant Portrait/Rejected na galeria de fotos.'
+                  t('gallery'),
+                  lang === 'en'
+                    ? "Couldn't open. Find DCIM/Instant Portrait/Rejected in your gallery."
+                    : 'Não foi possível abrir a pasta. Procure DCIM/Instant Portrait/Rejected na galeria de fotos.'
                 );
               }
             })
             .catch(() => {
               Alert.alert(
-                'Galeria',
-                'Não foi possível abrir a pasta. Procure a pasta de descartes na galeria.'
+                t('gallery'),
+                lang === 'en'
+                  ? "Couldn't open. Find the discard folder in your gallery."
+                  : 'Não foi possível abrir a pasta. Procure a pasta de descartes na galeria.'
               );
             });
         },
       },
-      { text: 'Cancelar', style: 'cancel' },
+      { text: t('cancel'), style: 'cancel' },
     ]);
-  }, []);
+  }, [t, lang]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -726,10 +1000,10 @@ export default function App() {
             <View style={styles.headerTextCol}>
               <Text style={styles.eyebrow}>Instant Portrait</Text>
               <Text style={styles.title}>
-                {mode === CAPTURE_MODES.MOTION ? 'Cena' : 'Intervalo'}
+                {mode === CAPTURE_MODES.MOTION ? t('scene') : t('interval')}
               </Text>
               <Text style={styles.subtitle} numberOfLines={2}>
-                {headerCadenceLine(mode, intervalMs, motionMinIntervalMs)}
+                {headerCadenceLine(mode, intervalMs, motionMinIntervalMs, lang === 'en' ? 'en' : 'pt')}
               </Text>
             </View>
 
@@ -737,9 +1011,9 @@ export default function App() {
               onPress={showGalleryFolders}
               style={({ pressed }) => [styles.badge, pressed && styles.badgePressed]}
             >
-              <Text style={styles.badgeLabel}>Fotos</Text>
+              <Text style={styles.badgeLabel}>{t('photos')}</Text>
               <Text style={styles.badgeValue}>{shotCount}</Text>
-              <Text style={styles.badgeHint}>tocar p/ pastas</Text>
+              <Text style={styles.badgeHint}>{t('tapForFolders')}</Text>
             </Pressable>
           </View>
         </View>
@@ -753,6 +1027,8 @@ export default function App() {
                 analysisActive={isCapturing}
                 sensitivity={motionSensitivity}
                 minIntervalMs={motionMinIntervalMs}
+                snapshotExposureNs={exposureNsFromShutterDenom(shutterDenom)}
+                snapshotIso={isoFromShutterDenom(shutterDenom)}
                 onScenePhoto={onSceneMotionPhoto}
                 onSceneReady={onSceneMotionReady}
                 onSceneError={onSceneMotionError}
@@ -775,13 +1051,13 @@ export default function App() {
         ) : !ready ? (
           <View style={styles.previewStub}>
             <ActivityIndicator color="#FF6B2C" />
-            <Text style={styles.muted}>A preparar permissões…</Text>
+            <Text style={styles.muted}>{t('preparing')}</Text>
           </View>
         ) : !hasAllPermissions ? (
           <View style={styles.previewStub}>
-            <Text style={styles.errorTitle}>Permissões necessárias</Text>
+            <Text style={styles.errorTitle}>{t('permissionsNeeded')}</Text>
             <Text style={styles.muted}>
-              Conceda acesso à câmara para poder usar a captura.
+              {t('grantCamera')}
             </Text>
             <Pressable
               style={({ pressed }) => [styles.primaryBtn, styles.primaryBtnWide, pressed && styles.btnPressed]}
@@ -795,24 +1071,20 @@ export default function App() {
                 }
               }}
             >
-              <Text style={styles.primaryBtnText}>Conceder permissões</Text>
+              <Text style={styles.primaryBtnText}>{t('grantPermissions')}</Text>
             </Pressable>
           </View>
         ) : null}
 
         {screen === 'config' ? (
-          <ScrollView
-            style={styles.controls}
-            contentContainerStyle={styles.controlsContent}
-            showsVerticalScrollIndicator={false}
-          >
-            <SectionCard title="Captura" s={styles}>
+          <View style={[styles.controls, { paddingHorizontal: 12, paddingBottom: 20, gap: 12 }]}>
+            <SectionCard title="Modo" s={styles}>
               <View style={styles.row}>
-                <Text style={styles.label}>Modo</Text>
+                <Text style={styles.label}>{t('mode')}</Text>
                 <View style={styles.pills}>
                   {[
-                    { id: CAPTURE_MODES.TIME, label: 'Por tempo' },
-                    { id: CAPTURE_MODES.MOTION, label: 'Cena' },
+                    { id: CAPTURE_MODES.TIME, label: t('byTime') },
+                    { id: CAPTURE_MODES.MOTION, label: t('sceneMode') },
                   ].map((opt) => {
                     const active = mode === opt.id;
                     return (
@@ -837,7 +1109,7 @@ export default function App() {
 
               {mode === CAPTURE_MODES.TIME ? (
                 <View style={styles.row}>
-                  <Text style={styles.label}>Intervalo</Text>
+                  <Text style={styles.label}>{t('intervalLabel')}</Text>
                   <View style={styles.pills}>
                     {INTERVAL_CHOICES_MS.map((ms) => {
                       const active = intervalMs === ms;
@@ -853,7 +1125,7 @@ export default function App() {
                           disabled={isCapturing}
                         >
                           <Text style={[styles.pillText, active && styles.pillTextActive]}>
-                            {formatIntervalLabel(ms)}
+                            {formatIntervalLabel(ms, lang === 'en' ? 'en' : 'pt')}
                           </Text>
                         </Pressable>
                       );
@@ -863,7 +1135,7 @@ export default function App() {
               ) : (
                 <>
                   <View style={styles.row}>
-                    <Text style={styles.label}>Mín. entre disparos</Text>
+                    <Text style={styles.label}>{t('minBetweenShots')}</Text>
                     <View style={styles.pills}>
                       {INTERVAL_CHOICES_MS.map((ms) => {
                         const active = motionMinIntervalMs === ms;
@@ -879,7 +1151,7 @@ export default function App() {
                             disabled={isCapturing}
                           >
                             <Text style={[styles.pillText, active && styles.pillTextActive]}>
-                              {formatIntervalLabel(ms)}
+                              {formatIntervalLabel(ms, lang === 'en' ? 'en' : 'pt')}
                             </Text>
                           </Pressable>
                         );
@@ -887,12 +1159,12 @@ export default function App() {
                     </View>
                   </View>
                   <View style={styles.row}>
-                    <Text style={styles.label}>Sensibilidade</Text>
+                    <Text style={styles.label}>{t('sensitivity')}</Text>
                     <View style={styles.pills}>
                       {[
-                        { id: 1, label: 'Baixa' },
-                        { id: 2, label: 'Normal' },
-                        { id: 3, label: 'Alta' },
+                        { id: 1, label: t('low') },
+                        { id: 2, label: t('normal') },
+                        { id: 3, label: t('high') },
                       ].map((s) => {
                         const active = motionSensitivity === s.id;
                         return (
@@ -918,13 +1190,12 @@ export default function App() {
               )}
             </SectionCard>
 
-            <SectionCard title="Filtragem (opcional)" s={styles}>
+            <SectionCard title={t('filteringOptional')} s={styles}>
               <View style={styles.row}>
-              <Text style={styles.labelInline}>Automática</Text>
               <View style={styles.pills}>
                 {[
-                  { id: 'off', label: 'Desligada' },
-                  { id: 'on', label: 'Ligada' },
+                  { id: 'off', label: t('off') },
+                  { id: 'on', label: t('on') },
                 ].map((opt) => {
                   const active = autoCullEnabled ? opt.id === 'on' : opt.id === 'off';
                   return (
@@ -950,8 +1221,8 @@ export default function App() {
               {autoCullEnabled ? (
                 <View style={[styles.pills, { marginTop: 8 }]}>
                   {[
-                    { id: 'people', label: 'Sem pessoas', value: cullNoPeople, setter: setCullNoPeople },
-                    { id: 'blur', label: 'Embaçada', value: cullBlur, setter: setCullBlur },
+                    { id: 'people', label: t('noPeople'), value: cullNoPeople, setter: setCullNoPeople },
+                    { id: 'blur', label: t('blurry'), value: cullBlur, setter: setCullBlur },
                   ].map((t) => {
                     const active = Boolean(t.value);
                     return (
@@ -1003,16 +1274,42 @@ export default function App() {
               ) : null}
             </SectionCard>
 
+            <SectionCard title={t('preferences')} s={styles}>
+              <View style={styles.row}>
+                <Text style={styles.label}>{t('shutter')}</Text>
+                <View style={styles.pills}>
+                  {SHUTTER_CHOICES.map((d) => {
+                    const active = shutterDenom === d;
+                    return (
+                      <Pressable
+                        key={d}
+                        style={({ pressed }) => [
+                          styles.pill,
+                          active && styles.pillActive,
+                          pressed && styles.btnPressed,
+                        ]}
+                        onPress={() => setShutterDenom(d)}
+                        disabled={isCapturing}
+                      >
+                        <Text style={[styles.pillText, active && styles.pillTextActive]}>{`1/${d}`}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            </SectionCard>
+
             <StatRowCard s={styles}>
               <Text style={styles.mutedSmall}>
-                Última sessão: Fotos boas <Text style={styles.subtitleStrong}>{keptCount}</Text> •
-                Descartar <Text style={styles.subtitleStrong}>{rejectedCount}</Text>
+                {t('lastSession')}: {t('goodPhotos')}{' '}
+                <Text style={styles.subtitleStrong}>{keptCount}</Text> • {t('discard')}{' '}
+                <Text style={styles.subtitleStrong}>{rejectedCount}</Text>
               </Text>
             </StatRowCard>
 
             {lastError ? (
               <View style={styles.errorBox}>
-                <Text style={styles.errorTitle}>Erro</Text>
+                <Text style={styles.errorTitle}>{t('error')}</Text>
                 <Text style={styles.errorText}>{lastError}</Text>
               </View>
             ) : null}
@@ -1028,10 +1325,18 @@ export default function App() {
                 onPress={() => setScreen('capture')}
                 disabled={!ready}
               >
-                <Text style={styles.primaryBtnText}>Abrir visor</Text>
+                <Text style={styles.primaryBtnText}>{t('openViewfinder')}</Text>
               </Pressable>
             </View>
-          </ScrollView>
+            <PaywallBar
+              visible={showPaywall && !isPremium}
+              disabled={!subs?.length}
+              onMonthly={() => tryBuy(IAP_SKUS.monthly)}
+              onYearly={() => tryBuy(IAP_SKUS.yearly)}
+              freeRemaining={freeRemaining}
+              s={styles}
+            />
+          </View>
         ) : (
           <View style={styles.captureBar}>
             <View style={styles.captureMeta}>
@@ -1060,7 +1365,7 @@ export default function App() {
                 onPress={startCapture}
                 disabled={!canStart}
               >
-                <Text style={styles.primaryBtnText}>Iniciar</Text>
+                <Text style={styles.primaryBtnText}>{t('start')}</Text>
               </Pressable>
 
               <Pressable
@@ -1072,7 +1377,7 @@ export default function App() {
                 onPress={stopCapture}
                 disabled={!canStop}
               >
-                <Text style={styles.secondaryBtnText}>Parar</Text>
+                <Text style={styles.secondaryBtnText}>{t('stop')}</Text>
               </Pressable>
 
               <Pressable
@@ -1083,33 +1388,58 @@ export default function App() {
                 onPress={() => setScreen('config')}
                 disabled={isCapturing}
               >
-                <Text style={styles.ghostBtnText}>Config</Text>
+                <Text style={styles.ghostBtnText}>{t('config')}</Text>
               </Pressable>
             </View>
           </View>
         )}
 
-      <StatusBar style="light" />
+      <PaywallBar
+        visible={showPaywall && !isPremium}
+        disabled={!subs?.length}
+        onMonthly={() => tryBuy(IAP_SKUS.monthly)}
+        onYearly={() => tryBuy(IAP_SKUS.yearly)}
+        freeRemaining={freeRemaining}
+        s={styles}
+      />
+      <StatusBar style={effectiveTheme === 'light' ? 'dark' : 'light'} />
       </SafeAreaView>
     </SafeAreaProvider>
   );
 }
 
-/* Tema: fundo noite + laranja “performance” (referência apps esportivos / câmera pro). */
-const C = {
-  bg: '#070A0F',
-  surface: '#0E141C',
-  card: '#111824',
-  border: 'rgba(255,255,255,0.08)',
-  text: '#F1F4FA',
-  textMuted: '#8B99AD',
-  accent: '#FF6B2C',
-  accentDim: 'rgba(255, 107, 44, 0.18)',
-  accentBorder: 'rgba(255, 140, 90, 0.45)',
-  pillBg: 'rgba(255,255,255,0.05)',
-};
+function PaywallBar({ visible, disabled, onMonthly, onYearly, freeRemaining, s }) {
+  if (!visible) return null;
+  return (
+    <View style={s.paywallWrap}>
+      <View style={s.paywallCard}>
+        <Text style={s.paywallTitle}>Limite do teste grátis atingido</Text>
+        <Text style={s.paywallBody}>
+          Para continuar, assine o Premium.
+        </Text>
+        <View style={s.paywallBtns}>
+          <Pressable
+            style={({ pressed }) => [s.paywallBtn, pressed && s.btnPressed, disabled && s.btnDisabled]}
+            onPress={onMonthly}
+            disabled={disabled}
+          >
+            <Text style={s.paywallBtnText}>R$20 / mês</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [s.paywallBtn, pressed && s.btnPressed, disabled && s.btnDisabled]}
+            onPress={onYearly}
+            disabled={disabled}
+          >
+            <Text style={s.paywallBtnText}>R$200 / ano</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
 
-const styles = StyleSheet.create({
+function makeStyles(C) {
+  return StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: C.bg,
@@ -1201,7 +1531,7 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 20,
     overflow: 'hidden',
-    backgroundColor: '#05080C',
+    backgroundColor: C.bg,
     borderWidth: 1,
     borderColor: C.border,
   },
@@ -1419,4 +1749,49 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.98 }],
     opacity: 0.92,
   },
-});
+  paywallWrap: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 12,
+  },
+  paywallCard: {
+    backgroundColor: C.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: C.accentBorder,
+    overflow: 'hidden',
+    padding: 14,
+    gap: 8,
+  },
+  paywallTitle: {
+    color: C.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  paywallBody: {
+    color: C.textMuted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  paywallBtns: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+  },
+  paywallBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: C.accent,
+  },
+  paywallBtnText: {
+    color: '#0A0A0A',
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  });
+}

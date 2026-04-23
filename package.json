@@ -22,6 +22,7 @@
     "instant-portrait-exif": "file:modules/instant-portrait-exif",
     "react": "19.1.0",
     "react-native": "0.81.5",
+    "react-native-iap": "^15.2.0",
     "react-native-safe-area-context": "^5.7.0"
   },
   "private": true,
