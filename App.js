@@ -4,6 +4,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Location from 'expo-location';
 import { useKeepAwake } from 'expo-keep-awake';
 import { iapEndAsync, iapGetActiveEntitlementAsync, iapInitAsync, iapLoadSubscriptionsAsync, iapRequestSubAsync, IAP_SKUS } from './iap';
+import { isPromoUnlimitedFreeActive } from './trialConfig';
 import {
   analyzeImageAsync,
   deleteFileAsync,
@@ -121,7 +122,6 @@ export default function App() {
   const autoCullEnabledRef = useRef(false);
   const cullNoPeopleRef = useRef(true);
   const cullBlurRef = useRef(false);
-  const blurStrictnessRef = useRef(2);
   const intervalMsRef = useRef(1000);
 
   const [cameraPermission, requestCameraPermission] = Camera.useCameraPermissions();
@@ -143,7 +143,6 @@ export default function App() {
   const [autoCullEnabled, setAutoCullEnabled] = useState(false);
   const [cullNoPeople, setCullNoPeople] = useState(true);
   const [cullBlur, setCullBlur] = useState(false);
-  const [blurStrictness, setBlurStrictness] = useState(2); // 1=leniente, 2=normal, 3=rigoroso
   const [keptCount, setKeptCount] = useState(0);
   const [rejectedCount, setRejectedCount] = useState(0);
   const [screen, setScreen] = useState('config'); // 'config' | 'capture'
@@ -216,8 +215,8 @@ export default function App() {
           start: 'Iniciar',
           stop: 'Parar',
           config: 'Config',
-          preferences: 'Preferências',
-          shutter: 'Obturador (congela movimento)',
+          preferences: '',
+          shutter: 'Velocidade',
           language: '',
           portuguese: '',
           english: '',
@@ -264,8 +263,8 @@ export default function App() {
           start: 'Start',
           stop: 'Stop',
           config: 'Config',
-          preferences: 'Preferences',
-          shutter: 'Shutter (freeze motion)',
+          preferences: '',
+          shutter: 'Speed',
           language: '',
           portuguese: '',
           english: '',
@@ -436,9 +435,7 @@ export default function App() {
   useEffect(() => {
     cullBlurRef.current = cullBlur;
   }, [cullBlur]);
-  useEffect(() => {
-    blurStrictnessRef.current = blurStrictness;
-  }, [blurStrictness]);
+  // blur strictness removido: fica um limiar fixo (normal) para simplificar UI/UX.
   useEffect(() => {
     intervalMsRef.current = intervalMs;
   }, [intervalMs]);
@@ -603,11 +600,31 @@ export default function App() {
       return;
     }
 
-    enqueueCaptureFromFileUri(String(photo.uri), Date.now() - t0);
+    // Best-effort: captura dados (quando o driver reporta via EXIF do expo-camera)
+    // e grava no EXIF do arquivo final salvo no MediaStore (sem poluir UI).
+    let captureMeta = null;
+    try {
+      const exif = photo?.exif ?? null;
+      let exposureTimeSec = null;
+      let actualIso = null;
+
+      // expo-camera costuma trazer ExposureTime (segundos) e ISOSpeedRatings.
+      const exp = Number(exif?.ExposureTime ?? NaN);
+      if (Number.isFinite(exp) && exp > 0) exposureTimeSec = exp;
+
+      const iso = Number(exif?.ISOSpeedRatings ?? exif?.ISO ?? exif?.PhotographicSensitivity ?? NaN);
+      if (Number.isFinite(iso) && iso > 0) actualIso = Math.round(iso);
+
+      if (exposureTimeSec || actualIso) {
+        captureMeta = { exposureTimeSec, iso: actualIso };
+      }
+    } catch (_) {}
+
+    enqueueCaptureFromFileUri(String(photo.uri), Date.now() - t0, captureMeta);
   }
 
   /** Modo tempo (expo-camera) ou modo movimento na cena (CameraX nativo): fila save + EXIF. */
-  function enqueueCaptureFromFileUri(srcUri, dispMs) {
+  function enqueueCaptureFromFileUri(srcUri, dispMs, captureMeta) {
     if (!isRunningRef.current) return;
     setLastError(null);
     setShotCount((c) => c + 1);
@@ -616,6 +633,8 @@ export default function App() {
       setLastShotMs(dispMs);
     }
     const coords = lastCoordsRef.current;
+    const requestedExposureNs = exposureNsFromShutterDenom(shutterDenom);
+    const requestedIso = isoFromShutterDenom(shutterDenom);
     saveQueueRef.current.push({
       srcUri: String(srcUri),
       meta: {
@@ -626,6 +645,12 @@ export default function App() {
         maxSidePx,
         minOutputWidthPx: uploadMinWidthPx,
         minOutputHeightPx: uploadMinHeightPx,
+        // pedido pelo utilizador (UI)
+        requestedExposureNs,
+        requestedIso,
+        // valores reais quando disponíveis (expo-camera)
+        exposureTimeSec: captureMeta?.exposureTimeSec ?? null,
+        iso: captureMeta?.iso ?? null,
       },
     });
     setSaveQueueSize(saveQueueRef.current.length);
@@ -636,7 +661,8 @@ export default function App() {
     const uri = e?.nativeEvent?.uri;
     if (!uri || typeof uri !== 'string') return;
     if (!isRunningRef.current) return;
-    enqueueCaptureFromFileUri(uri, 0);
+    // Captura nativa: sem EXIF garantido; grava pelo menos os valores solicitados (UI).
+    enqueueCaptureFromFileUri(uri, 0, null);
   }
 
   function onSceneMotionReady() {
@@ -711,10 +737,8 @@ export default function App() {
           if (cullNoPeopleRef.current && !hasPerson) reject = true;
 
           if (cullBlurRef.current) {
-            // thresholds empiricamente seguros para imagens 1440x1920/3MP;
-            // leniente aceita mais (threshold menor), rigoroso rejeita mais (threshold maior).
-            const bs = blurStrictnessRef.current;
-            const thr = bs === 1 ? 45 : bs === 3 ? 110 : 75;
+            // Limiar "normal" fixo (simplificação da UI).
+            const thr = 75;
             if (blurScore < thr) reject = true;
           }
 
@@ -741,7 +765,7 @@ export default function App() {
   }
 
   async function startIntervalCapture() {
-    if (!isPremium && totalPhotos >= FREE_PHOTO_LIMIT) {
+    if (!isPremium && !isPromoUnlimitedFreeActive() && totalPhotos >= FREE_PHOTO_LIMIT) {
       setLastError('Limite do teste grátis atingido. Assine o Premium para continuar.');
       setShowPaywall(true);
       return;
@@ -816,7 +840,7 @@ export default function App() {
   }
 
   async function startMotionCapture() {
-    if (!isPremium && totalPhotos >= FREE_PHOTO_LIMIT) {
+    if (!isPremium && !isPromoUnlimitedFreeActive() && totalPhotos >= FREE_PHOTO_LIMIT) {
       setLastError('Limite do teste grátis atingido. Assine o Premium para continuar.');
       setShowPaywall(true);
       return;
@@ -901,7 +925,6 @@ export default function App() {
 
   const canStart = ready && hasAllPermissions && cameraIsReady && !isCapturing;
   const canStop = isCapturing;
-  const freeRemaining = Math.max(0, FREE_PHOTO_LIMIT - totalPhotos);
 
   async function tryBuy(productId) {
     try {
@@ -1039,6 +1062,7 @@ export default function App() {
                 ref={cameraRef}
                 style={styles.preview}
                 facing="back"
+                animateShutter={false}
                 onCameraReady={onCameraReady}
                 onMountError={(e) => {
                   setCameraIsReady(false);
@@ -1077,7 +1101,11 @@ export default function App() {
         ) : null}
 
         {screen === 'config' ? (
-          <View style={[styles.controls, { paddingHorizontal: 12, paddingBottom: 20, gap: 12 }]}>
+          <ScrollView
+            style={styles.controls}
+            contentContainerStyle={styles.controlsContent}
+            keyboardShouldPersistTaps="handled"
+          >
             <SectionCard title="Modo" s={styles}>
               <View style={styles.row}>
                 <Text style={styles.label}>{t('mode')}</Text>
@@ -1245,33 +1273,7 @@ export default function App() {
                 </View>
               ) : null}
 
-              {autoCullEnabled && cullBlur ? (
-                <View style={[styles.pills, { marginTop: 8 }]}>
-                  {[
-                    { id: 1, label: 'Blur: Leniente' },
-                    { id: 2, label: 'Blur: Normal' },
-                    { id: 3, label: 'Blur: Rigoroso' },
-                  ].map((s) => {
-                    const active = blurStrictness === s.id;
-                    return (
-                      <Pressable
-                        key={s.id}
-                        style={({ pressed }) => [
-                          styles.pill,
-                          active && styles.pillActive,
-                          pressed && styles.btnPressed,
-                        ]}
-                        onPress={() => setBlurStrictness(s.id)}
-                        disabled={isCapturing}
-                      >
-                        <Text style={[styles.pillText, active && styles.pillTextActive]}>
-                          {s.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              ) : null}
+              {/* Sem seletor de rigor: manter UI simples */}
             </SectionCard>
 
             <SectionCard title={t('preferences')} s={styles}>
@@ -1329,14 +1331,13 @@ export default function App() {
               </Pressable>
             </View>
             <PaywallBar
-              visible={showPaywall && !isPremium}
+              visible={showPaywall && !isPremium && !isPromoUnlimitedFreeActive()}
               disabled={!subs?.length}
               onMonthly={() => tryBuy(IAP_SKUS.monthly)}
               onYearly={() => tryBuy(IAP_SKUS.yearly)}
-              freeRemaining={freeRemaining}
               s={styles}
             />
-          </View>
+          </ScrollView>
         ) : (
           <View style={styles.captureBar}>
             <View style={styles.captureMeta}>
@@ -1395,11 +1396,10 @@ export default function App() {
         )}
 
       <PaywallBar
-        visible={showPaywall && !isPremium}
+        visible={showPaywall && !isPremium && !isPromoUnlimitedFreeActive()}
         disabled={!subs?.length}
         onMonthly={() => tryBuy(IAP_SKUS.monthly)}
         onYearly={() => tryBuy(IAP_SKUS.yearly)}
-        freeRemaining={freeRemaining}
         s={styles}
       />
       <StatusBar style={effectiveTheme === 'light' ? 'dark' : 'light'} />
@@ -1408,7 +1408,7 @@ export default function App() {
   );
 }
 
-function PaywallBar({ visible, disabled, onMonthly, onYearly, freeRemaining, s }) {
+function PaywallBar({ visible, disabled, onMonthly, onYearly, s }) {
   if (!visible) return null;
   return (
     <View style={s.paywallWrap}>

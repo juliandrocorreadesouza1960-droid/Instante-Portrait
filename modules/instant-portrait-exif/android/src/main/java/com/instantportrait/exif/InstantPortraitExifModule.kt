@@ -535,6 +535,50 @@ class InstantPortraitExifModule : Module() {
     if (altitude != null) {
       exif.setAltitude(altitude)
     }
+
+    // Velocidade / ISO: grava no EXIF quando disponível.
+    // - exposureTimeSec: Double em segundos (ex.: 0.00066) vindo do expo-camera (best-effort)
+    // - iso: Int vindo do expo-camera (best-effort)
+    // - requestedExposureNs/requestedIso: valores pedidos na UI (fallback)
+    val exposureTimeSec = (data["exposureTimeSec"] as? Number)?.toDouble()
+    val iso = (data["iso"] as? Number)?.toInt()
+    val requestedExposureNs = (data["requestedExposureNs"] as? Number)?.toLong()
+    val requestedIso = (data["requestedIso"] as? Number)?.toInt()
+
+    fun exposureRationalFromSeconds(sec: Double): String? {
+      if (!sec.isFinite() || sec <= 0.0) return null
+      // Representa como 1/N quando possível (bom para tempos curtos)
+      val inv = kotlin.math.round(1.0 / sec).toLong()
+      return if (inv > 0 && inv <= 1_000_000) "1/$inv" else null
+    }
+
+    val exposureRational = exposureTimeSec?.let { exposureRationalFromSeconds(it) }
+      ?: requestedExposureNs?.let { ns ->
+        if (ns > 0) {
+          val inv = kotlin.math.round(1_000_000_000.0 / ns.toDouble()).toLong()
+          if (inv > 0) "1/$inv" else null
+        } else null
+      }
+
+    if (exposureRational != null) {
+      exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, exposureRational)
+    }
+
+    val isoToWrite = iso ?: requestedIso
+    if (isoToWrite != null && isoToWrite > 0) {
+      // ExifInterface aceita os dois; alguns viewers leem um ou outro.
+      exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, isoToWrite.toString())
+      exif.setAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS, isoToWrite.toString())
+    }
+
+    // Também grava um resumo em UserComment para facilitar inspeção em apps simples.
+    // Ex.: "InstantPortrait shutter=1/1000 iso=1600"
+    if (exposureRational != null || isoToWrite != null) {
+      val parts = mutableListOf<String>()
+      if (exposureRational != null) parts += "shutter=$exposureRational"
+      if (isoToWrite != null) parts += "iso=$isoToWrite"
+      exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "InstantPortrait " + parts.joinToString(" "))
+    }
   }
 
   private fun resolvePath(uriOrPath: String): String? {
