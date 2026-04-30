@@ -12,10 +12,10 @@
  * de conveniência para testes, não protecção criptográfica.
  */
 /**
- * APK promocional: válido até fim do dia 30/04/2026 (horário de Brasília, UTC-3).
+ * APK promocional: válido até fim do dia 10/05/2026 (horário de Brasília, UTC-3).
  * Após esse instante, `isBuildExpired()` bloqueia a app (ver `index.js`).
  */
-export const TRIAL_ENDS_AT_ISO = '2026-05-01T02:59:59.999Z';
+export const TRIAL_ENDS_AT_ISO = '2026-05-11T02:59:59.999Z';
 
 export function isBuildExpired() {
   if (TRIAL_ENDS_AT_ISO == null || String(TRIAL_ENDS_AT_ISO).trim() === '') {

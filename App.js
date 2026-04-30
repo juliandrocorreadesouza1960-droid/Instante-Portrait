@@ -2,7 +2,11 @@ import { StatusBar } from 'expo-status-bar';
 import * as Camera from 'expo-camera';
 import * as FileSystem from 'expo-file-system';
 import * as Location from 'expo-location';
-import { useKeepAwake } from 'expo-keep-awake';
+import {
+  activateKeepAwakeAsync,
+  deactivateKeepAwake,
+  useKeepAwake,
+} from 'expo-keep-awake';
 import { iapEndAsync, iapGetActiveEntitlementAsync, iapInitAsync, iapLoadSubscriptionsAsync, iapRequestSubAsync, IAP_SKUS } from './iap';
 import { isPromoUnlimitedFreeActive } from './trialConfig';
 import {
@@ -100,8 +104,12 @@ function StatRowCard({ children, s }) {
   );
 }
 
+const KEEP_AWAKE_APP_TAG = 'instant-portrait-app';
+const KEEP_AWAKE_CAPTURE_TAG = 'instant-portrait-capture';
+
 export default function App() {
-  useKeepAwake();
+  // Tag estável: evita churn do useId() e reforça keep-awake em iOS / quando a activity já está ativa.
+  useKeepAwake(KEEP_AWAKE_APP_TAG);
 
   const systemScheme = useColorScheme();
 
@@ -146,6 +154,16 @@ export default function App() {
   const [keptCount, setKeptCount] = useState(0);
   const [rejectedCount, setRejectedCount] = useState(0);
   const [screen, setScreen] = useState('config'); // 'config' | 'capture'
+
+  useEffect(() => {
+    if (!isCapturing) {
+      return undefined;
+    }
+    activateKeepAwakeAsync(KEEP_AWAKE_CAPTURE_TAG).catch(() => {});
+    return () => {
+      deactivateKeepAwake(KEEP_AWAKE_CAPTURE_TAG).catch(() => {});
+    };
+  }, [isCapturing]);
 
   // Preferências
   const [language, setLanguage] = useState('pt-BR'); // fixo (sem seletor na UI)
