@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
@@ -20,6 +21,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -36,6 +38,8 @@ private const val PORTAL_MIN_W = 3450
 private const val PORTAL_MIN_H = 2300
 private const val MAX_JPEG_FILE_BYTES = 12 * 1024 * 1024
 private const val DECODE_MAX_LONG_SIDE = 10000
+/** Evita bloquear o worker do Expo indefinidamente se ML Kit falhar em alguns OEMs. */
+private const val ANALYZE_ML_STEP_TIMEOUT_SEC = 20L
 
 class InstantPortraitExifModule : Module() {
   override fun definition() = ModuleDefinition {
@@ -45,6 +49,19 @@ class InstantPortraitExifModule : Module() {
     // (evita o bug em que o takePictureAsync fica 10-25s em idle sem outra atividade).
     AsyncFunction("pingAsync") {
       return@AsyncFunction System.currentTimeMillis()
+    }
+
+    AsyncFunction("startCaptureKeepAliveAsync") {
+      val ctx = appContext.reactContext?.applicationContext
+        ?: throw IllegalStateException("Sem reactContext")
+      CaptureKeepAliveService.start(ctx)
+      return@AsyncFunction true
+    }
+
+    AsyncFunction("stopCaptureKeepAliveAsync") {
+      val ctx = appContext.reactContext?.applicationContext ?: return@AsyncFunction false
+      CaptureKeepAliveService.stop(ctx)
+      return@AsyncFunction true
     }
 
     // Abre a pasta do armazenamento (DocumentProvider) no app de ficheiros / galeria.
@@ -320,8 +337,11 @@ class InstantPortraitExifModule : Module() {
           facesError = e
           latch.countDown()
         }
-      latch.await()
-      detector.close()
+      val faceOk = latch.await(ANALYZE_ML_STEP_TIMEOUT_SEC, TimeUnit.SECONDS)
+      if (!faceOk) {
+        Log.w("InstantPortraitExif", "analyzeImageAsync: face detection timed out")
+      }
+      runCatching { detector.close() }
       facesError?.let { /* best effort: ignora */ }
 
       // Pessoa/corpo via Pose (melhor para "de costas", corpo parcial, rosto cortado).
@@ -346,8 +366,11 @@ class InstantPortraitExifModule : Module() {
           poseError = e
           poseLatch.countDown()
         }
-      poseLatch.await()
-      poseDetector.close()
+      val poseOk = poseLatch.await(ANALYZE_ML_STEP_TIMEOUT_SEC, TimeUnit.SECONDS)
+      if (!poseOk) {
+        Log.w("InstantPortraitExif", "analyzeImageAsync: pose detection timed out")
+      }
+      runCatching { poseDetector.close() }
       poseError?.let { /* best effort */ }
 
       // Regra final de "tem pessoa":

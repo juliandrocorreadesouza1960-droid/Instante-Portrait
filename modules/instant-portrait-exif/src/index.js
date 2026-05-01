@@ -34,6 +34,15 @@ export async function pingAsync() {
   return InstantPortraitExif.pingAsync();
 }
 
+/** Android: FGS tipo camera durante captura contínua (reduz kill por OEM / bateria). */
+export async function startCaptureKeepAliveAsync() {
+  return InstantPortraitExif.startCaptureKeepAliveAsync();
+}
+
+export async function stopCaptureKeepAliveAsync() {
+  return InstantPortraitExif.stopCaptureKeepAliveAsync();
+}
+
 export async function deleteFileAsync(uri) {
   return InstantPortraitExif.deleteFileAsync(uri);
 }
@@ -65,6 +74,8 @@ export default {
   analyzeImageAsync,
   moveInGalleryAsync,
   pingAsync,
+  startCaptureKeepAliveAsync,
+  stopCaptureKeepAliveAsync,
   deleteFileAsync,
   openInstantPortraitFolderAsync,
   setSnapshotExposureNsAsync,

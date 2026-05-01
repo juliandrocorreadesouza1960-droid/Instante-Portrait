@@ -18,6 +18,8 @@ import {
   openInstantPortraitFolderAsync,
   pingAsync,
   saveJpegToGalleryAsync,
+  startCaptureKeepAliveAsync,
+  stopCaptureKeepAliveAsync,
   SceneMotionCameraView,
   setSnapshotExposureNsAsync,
   setSnapshotIsoAsync,
@@ -28,6 +30,7 @@ import {
   ActivityIndicator,
   Alert,
   BackHandler,
+  PermissionsAndroid,
   Platform,
   Pressable,
   ScrollView,
@@ -46,6 +49,19 @@ const CAPTURE_MODES = {
 const INTERVAL_CHOICES_MS = [500, 1000, 1500, 2000];
 const SHUTTER_CHOICES = [500, 1000, 1500];
 const FREE_PHOTO_LIMIT = 200;
+
+/** Android: notificação + FGS tipo camera — OEMs (ex.: Motorola) costumam respeitar mais que só keep-awake. */
+async function activateAndroidCaptureKeepAlive() {
+  if (Platform.OS !== 'android') return;
+  try {
+    if (typeof Platform.Version === 'number' && Platform.Version >= 33) {
+      await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+    }
+  } catch (_) {}
+  try {
+    await startCaptureKeepAliveAsync();
+  } catch (_) {}
+}
 
 function formatIntervalLabel(ms, lang) {
   if (ms === 500) return lang === 'en' ? '0.5s' : '0,5s';
@@ -500,6 +516,9 @@ export default function App() {
       locationSubRef.current = null;
     }
     setIsCapturing(false);
+    if (Platform.OS === 'android') {
+      stopCaptureKeepAliveAsync().catch(() => null);
+    }
   }
 
   async function takePictureWithRetry(cam) {
@@ -796,6 +815,8 @@ export default function App() {
     setIsCapturing(true);
     setLastError(null);
 
+    await activateAndroidCaptureKeepAlive();
+
     // GPS em background: evita travar a captura esperando fix de localização.
     if (locationPermission?.granted && !locationSubRef.current) {
       try {
@@ -870,6 +891,8 @@ export default function App() {
     setRejectedCount(0);
     setIsCapturing(true);
     setLastError(null);
+
+    await activateAndroidCaptureKeepAlive();
 
     // GPS em background (mesma lógica do modo tempo). O disparo vem da vista nativa
     // SceneMotion (CameraX ImageAnalysis) com o celular parado no tripé.
