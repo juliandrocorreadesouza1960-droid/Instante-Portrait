@@ -45,6 +45,12 @@ const CAPTURE_MODES = {
   MOTION: 'motion',
 };
 
+/** Experiência na configuração: Simples = só intervalo + velocidade; Completo = todos os modos e filtros. */
+const UI_TIER = {
+  SIMPLE: 'simple',
+  COMPLETE: 'complete',
+};
+
 /** Intervalo de cadência (modo Tempo) e mínimo entre disparos (modo Movimento). */
 const INTERVAL_CHOICES_MS = [500, 1000, 1500, 2000];
 const SHUTTER_CHOICES = [500, 1000, 1500];
@@ -170,6 +176,7 @@ export default function App() {
   const [keptCount, setKeptCount] = useState(0);
   const [rejectedCount, setRejectedCount] = useState(0);
   const [screen, setScreen] = useState('config'); // 'config' | 'capture'
+  const [uiTier, setUiTier] = useState(UI_TIER.COMPLETE);
 
   useEffect(() => {
     if (!isCapturing) {
@@ -246,6 +253,10 @@ export default function App() {
           discard: 'Descartar',
           error: 'Erro',
           openViewfinder: 'Abrir visor',
+          experienceSimple: 'Simples',
+          experienceComplete: 'Completo',
+          experienceHint:
+            'Simples: só fotos por tempo. Completo: movimento na cena, filtragem e todos os ajustes.',
           start: 'Iniciar',
           stop: 'Parar',
           config: 'Config',
@@ -294,6 +305,10 @@ export default function App() {
           discard: 'Discard',
           error: 'Error',
           openViewfinder: 'Open viewfinder',
+          experienceSimple: 'Simple',
+          experienceComplete: 'Full',
+          experienceHint:
+            'Simple: time-based shots only. Full: motion mode, filtering, and all options.',
           start: 'Start',
           stop: 'Stop',
           config: 'Config',
@@ -380,10 +395,9 @@ export default function App() {
         const raw = await FileSystem.readAsStringAsync(settingsPath);
         const parsed = JSON.parse(raw || '{}');
         if (parsed?.language === 'en' || parsed?.language === 'pt-BR') setLanguage(parsed.language);
-        if (parsed?.themeMode === 'system' || parsed?.themeMode === 'dark' || parsed?.themeMode === 'light')
-          setThemeMode(parsed.themeMode);
         if (SHUTTER_CHOICES.includes(parsed?.shutterDenom)) setShutterDenom(parsed.shutterDenom);
         if (Number.isFinite(Number(parsed?.totalPhotos))) setTotalPhotos(Number(parsed.totalPhotos));
+        if (parsed?.uiTier === UI_TIER.SIMPLE || parsed?.uiTier === UI_TIER.COMPLETE) setUiTier(parsed.uiTier);
       } catch (_) {
         // ok: primeira execução (sem arquivo)
       }
@@ -434,9 +448,18 @@ export default function App() {
 
   // Persistência simples (arquivo JSON) — salva sempre que alterar preferências.
   useEffect(() => {
-    const payload = JSON.stringify({ language, themeMode, shutterDenom, totalPhotos });
+    const payload = JSON.stringify({ language, themeMode, shutterDenom, totalPhotos, uiTier });
     FileSystem.writeAsStringAsync(settingsPath, payload).catch(() => null);
-  }, [language, themeMode, shutterDenom, totalPhotos, settingsPath]);
+  }, [language, themeMode, shutterDenom, totalPhotos, uiTier, settingsPath]);
+
+  const isSimpleTier = uiTier === UI_TIER.SIMPLE;
+
+  useEffect(() => {
+    if (uiTier === UI_TIER.SIMPLE) {
+      setMode(CAPTURE_MODES.TIME);
+      setAutoCullEnabled(false);
+    }
+  }, [uiTier]);
 
   // Atualiza o obturador nativo (SharedPreferences) quando mudar no JS.
   useEffect(() => {
@@ -1147,38 +1170,45 @@ export default function App() {
             contentContainerStyle={styles.controlsContent}
             keyboardShouldPersistTaps="handled"
           >
-            <SectionCard title="Modo" s={styles}>
-              <View style={styles.row}>
-                <Text style={styles.label}>{t('mode')}</Text>
-                <View style={styles.pills}>
-                  {[
-                    { id: CAPTURE_MODES.TIME, label: t('byTime') },
-                    { id: CAPTURE_MODES.MOTION, label: t('sceneMode') },
-                  ].map((opt) => {
-                    const active = mode === opt.id;
-                    return (
-                      <Pressable
-                        key={opt.id}
-                        style={({ pressed }) => [
-                          styles.pill,
-                          active && styles.pillActive,
-                          pressed && styles.btnPressed,
-                        ]}
-                        onPress={() => setMode(opt.id)}
-                        disabled={isCapturing}
-                      >
-                        <Text style={[styles.pillText, active && styles.pillTextActive]}>
-                          {opt.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
+            <SectionCard
+              title={isSimpleTier ? t('intervalLabel') : t('mode')}
+              s={styles}
+            >
+              {!isSimpleTier ? (
+                <View style={styles.row}>
+                  <Text style={styles.label}>{t('mode')}</Text>
+                  <View style={styles.pills}>
+                    {[
+                      { id: CAPTURE_MODES.TIME, label: t('byTime') },
+                      { id: CAPTURE_MODES.MOTION, label: t('sceneMode') },
+                    ].map((opt) => {
+                      const active = mode === opt.id;
+                      return (
+                        <Pressable
+                          key={opt.id}
+                          style={({ pressed }) => [
+                            styles.pill,
+                            active && styles.pillActive,
+                            pressed && styles.btnPressed,
+                          ]}
+                          onPress={() => setMode(opt.id)}
+                          disabled={isCapturing}
+                        >
+                          <Text style={[styles.pillText, active && styles.pillTextActive]}>
+                            {opt.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
                 </View>
-              </View>
+              ) : null}
 
               {mode === CAPTURE_MODES.TIME ? (
                 <View style={styles.row}>
-                  <Text style={styles.label}>{t('intervalLabel')}</Text>
+                  {!isSimpleTier ? (
+                    <Text style={styles.label}>{t('intervalLabel')}</Text>
+                  ) : null}
                   <View style={styles.pills}>
                     {INTERVAL_CHOICES_MS.map((ms) => {
                       const active = intervalMs === ms;
@@ -1259,63 +1289,63 @@ export default function App() {
               )}
             </SectionCard>
 
-            <SectionCard title={t('filteringOptional')} s={styles}>
-              <View style={styles.row}>
-              <View style={styles.pills}>
-                {[
-                  { id: 'off', label: t('off') },
-                  { id: 'on', label: t('on') },
-                ].map((opt) => {
-                  const active = autoCullEnabled ? opt.id === 'on' : opt.id === 'off';
-                  return (
-                    <Pressable
-                      key={opt.id}
-                      style={({ pressed }) => [
-                        styles.pill,
-                        active && styles.pillActive,
-                        pressed && styles.btnPressed,
-                      ]}
-                      onPress={() => setAutoCullEnabled(opt.id === 'on')}
-                      disabled={isCapturing}
-                    >
-                      <Text style={[styles.pillText, active && styles.pillTextActive]}>
-                        {opt.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+            {!isSimpleTier ? (
+              <SectionCard title={t('filteringOptional')} s={styles}>
+                <View style={styles.row}>
+                  <View style={styles.pills}>
+                    {[
+                      { id: 'off', label: t('off') },
+                      { id: 'on', label: t('on') },
+                    ].map((opt) => {
+                      const active = autoCullEnabled ? opt.id === 'on' : opt.id === 'off';
+                      return (
+                        <Pressable
+                          key={opt.id}
+                          style={({ pressed }) => [
+                            styles.pill,
+                            active && styles.pillActive,
+                            pressed && styles.btnPressed,
+                          ]}
+                          onPress={() => setAutoCullEnabled(opt.id === 'on')}
+                          disabled={isCapturing}
+                        >
+                          <Text style={[styles.pillText, active && styles.pillTextActive]}>
+                            {opt.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
                 </View>
-              </View>
 
-              {autoCullEnabled ? (
-                <View style={[styles.pills, { marginTop: 8 }]}>
-                  {[
-                    { id: 'people', label: t('noPeople'), value: cullNoPeople, setter: setCullNoPeople },
-                    { id: 'blur', label: t('blurry'), value: cullBlur, setter: setCullBlur },
-                  ].map((t) => {
-                    const active = Boolean(t.value);
-                    return (
-                      <Pressable
-                        key={t.id}
-                        style={({ pressed }) => [
-                          styles.pill,
-                          active && styles.pillActive,
-                          pressed && styles.btnPressed,
-                        ]}
-                        onPress={() => t.setter(!t.value)}
-                        disabled={isCapturing}
-                      >
-                        <Text style={[styles.pillText, active && styles.pillTextActive]}>
-                          {t.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              ) : null}
-
-              {/* Sem seletor de rigor: manter UI simples */}
-            </SectionCard>
+                {autoCullEnabled ? (
+                  <View style={[styles.pills, { marginTop: 8 }]}>
+                    {[
+                      { id: 'people', label: t('noPeople'), value: cullNoPeople, setter: setCullNoPeople },
+                      { id: 'blur', label: t('blurry'), value: cullBlur, setter: setCullBlur },
+                    ].map((tierOpt) => {
+                      const active = Boolean(tierOpt.value);
+                      return (
+                        <Pressable
+                          key={tierOpt.id}
+                          style={({ pressed }) => [
+                            styles.pill,
+                            active && styles.pillActive,
+                            pressed && styles.btnPressed,
+                          ]}
+                          onPress={() => tierOpt.setter(!tierOpt.value)}
+                          disabled={isCapturing}
+                        >
+                          <Text style={[styles.pillText, active && styles.pillTextActive]}>
+                            {tierOpt.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : null}
+              </SectionCard>
+            ) : null}
 
             <SectionCard title={t('preferences')} s={styles}>
               <View style={styles.row}>
@@ -1370,6 +1400,47 @@ export default function App() {
               >
                 <Text style={styles.primaryBtnText}>{t('openViewfinder')}</Text>
               </Pressable>
+
+              <Text style={[styles.mutedSmall, styles.tierHint]}>{t('experienceHint')}</Text>
+
+              <View style={styles.tierRow}>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.tierBtn,
+                    isSimpleTier && styles.tierBtnActive,
+                    pressed && styles.btnPressed,
+                  ]}
+                  onPress={() => setUiTier(UI_TIER.SIMPLE)}
+                  disabled={isCapturing}
+                >
+                  <Text
+                    style={[
+                      styles.tierBtnText,
+                      isSimpleTier && styles.tierBtnTextActive,
+                    ]}
+                  >
+                    {t('experienceSimple')}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.tierBtn,
+                    !isSimpleTier && styles.tierBtnActive,
+                    pressed && styles.btnPressed,
+                  ]}
+                  onPress={() => setUiTier(UI_TIER.COMPLETE)}
+                  disabled={isCapturing}
+                >
+                  <Text
+                    style={[
+                      styles.tierBtnText,
+                      !isSimpleTier && styles.tierBtnTextActive,
+                    ]}
+                  >
+                    {t('experienceComplete')}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
             <PaywallBar
               visible={showPaywall && !isPremium && !isPromoUnlimitedFreeActive()}
@@ -1731,6 +1802,42 @@ function makeStyles(C) {
   },
   actionsSingle: {
     marginTop: 4,
+    gap: 12,
+  },
+  tierHint: {
+    textAlign: 'center',
+    paddingHorizontal: 4,
+  },
+  tierRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'stretch',
+  },
+  tierBtn: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  tierBtnActive: {
+    backgroundColor: C.accentDim,
+    borderColor: C.accentBorder,
+  },
+  tierBtnText: {
+    color: C.textMuted,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  tierBtnTextActive: {
+    color: C.text,
   },
   primaryBtn: {
     flex: 1,
