@@ -65,13 +65,13 @@ class InstantPortraitExifModule : Module() {
     }
 
     // Abre a pasta do armazenamento (DocumentProvider) no app de ficheiros / galeria.
-    // [which] "kept" -> DCIM/Instant Portrait, "rejected" -> .../Rejected
+    // [which] "kept" -> DCIM/AutoFrame, "rejected" -> .../Rejected
     AsyncFunction("openInstantPortraitFolderAsync") { which: String? ->
       val act = appContext.currentActivity
         ?: return@AsyncFunction mapOf("ok" to false, "error" to "no_activity")
       val documentId = when (which) {
-        "rejected" -> "primary:DCIM/Instant Portrait/Rejected"
-        else -> "primary:DCIM/Instant Portrait"
+        "rejected" -> "primary:DCIM/AutoFrame/Rejected"
+        else -> "primary:DCIM/AutoFrame"
       }
       return@AsyncFunction runCatching {
         val uri = DocumentsContract.buildDocumentUri(
@@ -84,7 +84,7 @@ class InstantPortraitExifModule : Module() {
           addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         act.startActivity(
-          Intent.createChooser(intent, "Galeria — Instant Portrait").apply {
+          Intent.createChooser(intent, "Galeria — AutoFrame").apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
           }
         )
@@ -101,7 +101,7 @@ class InstantPortraitExifModule : Module() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
           }
           act.startActivity(
-            Intent.createChooser(i2, "Galeria — Instant Portrait").apply {
+            Intent.createChooser(i2, "Galeria — AutoFrame").apply {
               addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
           )
@@ -175,7 +175,7 @@ class InstantPortraitExifModule : Module() {
       )
     }
 
-    // Salva no MediaStore (DCIM/Instant Portrait) criando um novo item.
+    // Salva no MediaStore (DCIM/AutoFrame) criando um novo item.
     // Isso evita o prompt repetitivo do Samsung "permitir modificar esta foto?".
     // Pode: encolher se maxSidePx > 0; ampliar (preservando proporção) se a imagem for menor
     // que minOutputWidthPx / minOutputHeightPx (p.ex. portais 3450×2300), preservando
@@ -189,7 +189,7 @@ class InstantPortraitExifModule : Module() {
 
       val nowMs = (data["timestampMs"] as? Number)?.toLong() ?: System.currentTimeMillis()
       val fileName = (data["fileName"] as? String)
-        ?: ("InstantPortrait_" + nowMs.toString() + ".jpg")
+        ?: ("AutoFrame_" + nowMs.toString() + ".jpg")
       val maxSidePx = (data["maxSidePx"] as? Number)?.toInt() ?: 0
       var minOutW = (data["minOutputWidthPx"] as? Number)?.toInt() ?: 0
       var minOutH = (data["minOutputHeightPx"] as? Number)?.toInt() ?: 0
@@ -199,7 +199,7 @@ class InstantPortraitExifModule : Module() {
       val values = ContentValues().apply {
         put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
         put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-        put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/Instant Portrait")
+        put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/AutoFrame")
         put(MediaStore.Images.Media.IS_PENDING, 1)
       }
 
@@ -339,7 +339,7 @@ class InstantPortraitExifModule : Module() {
         }
       val faceOk = latch.await(ANALYZE_ML_STEP_TIMEOUT_SEC, TimeUnit.SECONDS)
       if (!faceOk) {
-        Log.w("InstantPortraitExif", "analyzeImageAsync: face detection timed out")
+        Log.w("AutoFrameExif", "analyzeImageAsync: face detection timed out")
       }
       runCatching { detector.close() }
       facesError?.let { /* best effort: ignora */ }
@@ -368,7 +368,7 @@ class InstantPortraitExifModule : Module() {
         }
       val poseOk = poseLatch.await(ANALYZE_ML_STEP_TIMEOUT_SEC, TimeUnit.SECONDS)
       if (!poseOk) {
-        Log.w("InstantPortraitExif", "analyzeImageAsync: pose detection timed out")
+        Log.w("AutoFrameExif", "analyzeImageAsync: pose detection timed out")
       }
       runCatching { poseDetector.close() }
       poseError?.let { /* best effort */ }
@@ -391,7 +391,7 @@ class InstantPortraitExifModule : Module() {
     }
 
     // Move um item do MediaStore alterando o RELATIVE_PATH (Android 10+).
-    // Ex.: targetRelativePath = "DCIM/Instant Portrait/Rejected"
+    // Ex.: targetRelativePath = "DCIM/AutoFrame/Rejected"
     AsyncFunction("moveInGalleryAsync") { contentUri: String, targetRelativePath: String ->
       val reactContext = appContext.reactContext ?: throw IllegalStateException("Sem reactContext")
       val cr = reactContext.contentResolver
@@ -595,12 +595,12 @@ class InstantPortraitExifModule : Module() {
     }
 
     // Também grava um resumo em UserComment para facilitar inspeção em apps simples.
-    // Ex.: "InstantPortrait shutter=1/1000 iso=1600"
+    // Ex.: "AutoFrame shutter=1/1000 iso=1600"
     if (exposureRational != null || isoToWrite != null) {
       val parts = mutableListOf<String>()
       if (exposureRational != null) parts += "shutter=$exposureRational"
       if (isoToWrite != null) parts += "iso=$isoToWrite"
-      exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "InstantPortrait " + parts.joinToString(" "))
+      exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "AutoFrame " + parts.joinToString(" "))
     }
   }
 

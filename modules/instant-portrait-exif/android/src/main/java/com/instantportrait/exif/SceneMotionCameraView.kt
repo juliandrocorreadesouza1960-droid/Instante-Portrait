@@ -410,7 +410,7 @@ class SceneMotionCameraView(
   companion object {
     private const val TAG = "SceneMotionCameraView"
 
-    private const val PREFS = "instant_portrait_prefs"
+    private const val PREFS = "autoframe_prefs"
     private const val KEY_EXPOSURE_NS = "snapshotExposureNs"
     private const val KEY_ISO = "snapshotIso"
     private const val KEY_AUTO_EXPOSURE = "snapshotAutoExposure"

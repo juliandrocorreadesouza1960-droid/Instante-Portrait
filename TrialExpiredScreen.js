@@ -18,7 +18,7 @@ export function TrialExpiredScreen() {
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.accent} />
         <View style={styles.content}>
-          <Text style={styles.eyebrow}>Instant Portrait</Text>
+          <Text style={styles.eyebrow}>AutoFrame</Text>
           <Text style={styles.title}>Build de teste expirada</Text>
           <Text style={styles.body}>
             Este APK deixou de estar ativo. Gera uma nova build ou peça acesso a uma versão

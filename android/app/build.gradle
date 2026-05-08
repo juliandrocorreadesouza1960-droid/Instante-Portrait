@@ -106,8 +106,8 @@ android {
         applicationId 'fotos.instataneas.corridas'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 5
-        versionName "1.0.4"
+        versionCode 6
+        versionName "1.0.5"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -179,7 +179,7 @@ android {
     }
 
     // Desligado para sair **um** APK; com splits, haveria dois ficheiros e o mesmo
-    // "INSTANTE PORTRAIT.apk" não poderia ser usado em ambos.
+    // Dois APKs não podem partilhar o mesmo nome de ficheiro.
     splits {
         abi {
             enable false
@@ -192,7 +192,7 @@ android.applicationVariants.all { variant ->
     variant.outputs.configureEach { output ->
         if (variant.buildType.name == "release" && output.outputFileName != null && output.outputFileName.endsWith(".apk")) {
             def isEnhance = (variant.flavorName ?: "").toLowerCase().contains("enhance")
-            output.outputFileName = isEnhance ? "INSTANTE PORTRAIT (Enhance).apk" : "INSTANTE PORTRAIT.apk"
+            output.outputFileName = isEnhance ? "AutoFrame-Enhance.apk" : "AutoFrame.apk"
         }
     }
 }

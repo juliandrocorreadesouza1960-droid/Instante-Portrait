@@ -24,7 +24,7 @@ import {
   setSnapshotIsoAsync,
 } from 'instant-portrait-exif';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
@@ -126,13 +126,14 @@ function StatRowCard({ children, s }) {
   );
 }
 
-const KEEP_AWAKE_APP_TAG = 'instant-portrait-app';
-const KEEP_AWAKE_CAPTURE_TAG = 'instant-portrait-capture';
+const KEEP_AWAKE_APP_TAG = 'autoframe-app';
+const KEEP_AWAKE_CAPTURE_TAG = 'autoframe-capture';
 
 export default function App() {
   // Tag estável: evita churn do useId() e reforça keep-awake em iOS / quando a activity já está ativa.
   useKeepAwake(KEEP_AWAKE_APP_TAG);
 
+  const insets = useSafeAreaInsets();
   const systemScheme = useColorScheme();
 
   const cameraRef = useRef(null);
@@ -823,7 +824,7 @@ export default function App() {
           }
 
           if (reject) {
-            await moveInGalleryAsync(uri, 'DCIM/Instant Portrait/Rejected');
+            await moveInGalleryAsync(uri, 'DCIM/AutoFrame/Rejected');
             setRejectedCount((c) => c + 1);
           } else {
             setKeptCount((c) => c + 1);
@@ -1026,8 +1027,8 @@ export default function App() {
       Alert.alert(
         t('gallery'),
         lang === 'en'
-          ? 'On this device, open your photos app and look for the Instant Portrait album/folder.'
-          : 'Neste dispositivo, abra a app de fotos e procure o álbum ou pasta do Instant Portrait.'
+          ? 'On this device, open your photos app and look for the AutoFrame album/folder.'
+          : 'Neste dispositivo, abra a app de fotos e procure o álbum ou pasta do AutoFrame.'
       );
       return;
     }
@@ -1041,8 +1042,8 @@ export default function App() {
                 Alert.alert(
                   t('gallery'),
                   lang === 'en'
-                    ? "Couldn't open automatically. In the gallery, find DCIM/Instant Portrait."
-                    : 'Não foi possível abrir a pasta automaticamente. No telefone, abra a galeria e localize DCIM/Instant Portrait.'
+                    ? "Couldn't open automatically. In the gallery, find DCIM/AutoFrame."
+                    : 'Não foi possível abrir a pasta automaticamente. No telefone, abra a galeria e localize DCIM/AutoFrame.'
                 );
               }
             })
@@ -1050,8 +1051,8 @@ export default function App() {
               Alert.alert(
                 t('gallery'),
                 lang === 'en'
-                  ? "Couldn't open the folder. Find DCIM/Instant Portrait in your gallery."
-                  : 'Não foi possível abrir a pasta. Procure a pasta DCIM/Instant Portrait na galeria de fotos.'
+                  ? "Couldn't open the folder. Find DCIM/AutoFrame in your gallery."
+                  : 'Não foi possível abrir a pasta. Procure a pasta DCIM/AutoFrame na galeria de fotos.'
               );
             });
         },
@@ -1065,8 +1066,8 @@ export default function App() {
                 Alert.alert(
                   t('gallery'),
                   lang === 'en'
-                    ? "Couldn't open. Find DCIM/Instant Portrait/Rejected in your gallery."
-                    : 'Não foi possível abrir a pasta. Procure DCIM/Instant Portrait/Rejected na galeria de fotos.'
+                    ? "Couldn't open. Find DCIM/AutoFrame/Rejected in your gallery."
+                    : 'Não foi possível abrir a pasta. Procure DCIM/AutoFrame/Rejected na galeria de fotos.'
                 );
               }
             })
@@ -1105,7 +1106,7 @@ export default function App() {
           <View style={styles.headerAccent} />
           <View style={styles.headerRow}>
             <View style={styles.headerTextCol}>
-              <Text style={styles.eyebrow}>Instant Portrait</Text>
+              <Text style={styles.eyebrow}>AutoFrame</Text>
               <Text style={styles.title}>
                 {mode === CAPTURE_MODES.MOTION ? t('scene') : t('interval')}
               </Text>
@@ -1462,13 +1463,6 @@ export default function App() {
                 </Pressable>
               </View>
             </View>
-            <PaywallBar
-              visible={showPaywall && !isPremium}
-              disabled={!subs?.length}
-              onMonthly={() => tryBuy(IAP_SKUS.monthly)}
-              onYearly={() => tryBuy(IAP_SKUS.yearly)}
-              s={styles}
-            />
           </ScrollView>
         ) : (
           <View style={styles.captureBar}>
@@ -1529,9 +1523,11 @@ export default function App() {
 
       <PaywallBar
         visible={showPaywall && !isPremium}
-        disabled={!subs?.length}
         onMonthly={() => tryBuy(IAP_SKUS.monthly)}
         onYearly={() => tryBuy(IAP_SKUS.yearly)}
+        bottomInset={insets.bottom}
+        topInset={insets.top}
+        storeProductsFound={subs.length > 0}
         s={styles}
       />
       <StatusBar style={effectiveTheme === 'light' ? 'dark' : 'light'} />
@@ -1540,30 +1536,49 @@ export default function App() {
   );
 }
 
-function PaywallBar({ visible, disabled, onMonthly, onYearly, s }) {
+function PaywallBar({
+  visible,
+  onMonthly,
+  onYearly,
+  bottomInset,
+  topInset,
+  storeProductsFound,
+  s,
+}) {
   if (!visible) return null;
+  const padTop = Math.max(Number(topInset) || 0, 12);
+  const padBottom = Math.max(Number(bottomInset) || 0, 16);
   return (
-    <View style={s.paywallWrap}>
-      <View style={s.paywallCard}>
-        <Text style={s.paywallTitle}>Limite do teste grátis atingido</Text>
-        <Text style={s.paywallBody}>
-          Para continuar, assine o Premium.
-        </Text>
-        <View style={s.paywallBtns}>
-          <Pressable
-            style={({ pressed }) => [s.paywallBtn, pressed && s.btnPressed, disabled && s.btnDisabled]}
-            onPress={onMonthly}
-            disabled={disabled}
-          >
-            <Text style={s.paywallBtnText}>R$20 / mês</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [s.paywallBtn, pressed && s.btnPressed, disabled && s.btnDisabled]}
-            onPress={onYearly}
-            disabled={disabled}
-          >
-            <Text style={s.paywallBtnText}>R$200 / ano</Text>
-          </Pressable>
+    <View
+      style={[s.paywallOverlay, { paddingTop: padTop, paddingBottom: padBottom }]}
+      accessibilityViewIsModal
+    >
+      <View style={s.paywallCardWrap}>
+        <View style={s.paywallCard}>
+          <Text style={s.paywallTitle}>Limite do teste grátis atingido</Text>
+          <Text style={s.paywallBody}>
+            Para continuar, assine o Premium.
+          </Text>
+          {!storeProductsFound ? (
+            <Text style={s.paywallHint}>
+              A sincronizar com a Play Store… Se os botões não abrirem a compra, confirme que instalou pela loja e
+              que tem conta Google ativa.
+            </Text>
+          ) : null}
+          <View style={s.paywallBtns}>
+            <Pressable
+              style={({ pressed }) => [s.paywallBtn, pressed && s.btnPressed]}
+              onPress={onMonthly}
+            >
+              <Text style={s.paywallBtnText}>R$20 / mês</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [s.paywallBtn, pressed && s.btnPressed]}
+              onPress={onYearly}
+            >
+              <Text style={s.paywallBtnText}>R$200 / ano</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     </View>
@@ -1917,11 +1932,18 @@ function makeStyles(C) {
     transform: [{ scale: 0.98 }],
     opacity: 0.92,
   },
-  paywallWrap: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 12,
+  paywallOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(7, 10, 15, 0.82)',
+    zIndex: 100,
+    elevation: 100,
+  },
+  paywallCardWrap: {
+    width: '100%',
+    maxWidth: 400,
   },
   paywallCard: {
     backgroundColor: C.surface,
@@ -1931,6 +1953,11 @@ function makeStyles(C) {
     overflow: 'hidden',
     padding: 14,
     gap: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.35,
+    shadowRadius: 24,
+    elevation: 16,
   },
   paywallTitle: {
     color: C.text,
@@ -1942,6 +1969,13 @@ function makeStyles(C) {
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '700',
+  },
+  paywallHint: {
+    color: C.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+    opacity: 0.92,
   },
   paywallBtns: {
     flexDirection: 'row',

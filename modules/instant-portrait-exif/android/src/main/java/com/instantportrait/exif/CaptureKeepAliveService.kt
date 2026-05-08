@@ -38,7 +38,7 @@ class CaptureKeepAliveService : Service() {
         ?: android.R.drawable.ic_menu_camera
 
       val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setContentTitle("Instant Portrait")
+        .setContentTitle("AutoFrame")
         .setContentText("Captura em curso — pode minimizar, não feche o app.")
         .setSmallIcon(smallIcon)
         .setOngoing(true)
@@ -78,7 +78,7 @@ class CaptureKeepAliveService : Service() {
 
   companion object {
     private const val TAG = "CaptureKeepAlive"
-    private const val CHANNEL_ID = "instant_portrait_capture_v1"
+    private const val CHANNEL_ID = "autoframe_capture_v1"
     private const val NOTIFICATION_ID = 71042
 
     fun start(ctx: Context) {
