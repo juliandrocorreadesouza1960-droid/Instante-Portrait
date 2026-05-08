@@ -8,7 +8,6 @@ import {
   useKeepAwake,
 } from 'expo-keep-awake';
 import { iapEndAsync, iapGetActiveEntitlementAsync, iapInitAsync, iapLoadSubscriptionsAsync, iapRequestSubAsync, IAP_SKUS } from './iap';
-import { isPromoUnlimitedFreeActive } from './trialConfig';
 import {
   analyzeImageAsync,
   deleteFileAsync,
@@ -54,7 +53,8 @@ const UI_TIER = {
 /** Intervalo de cadência (modo Tempo) e mínimo entre disparos (modo Movimento). */
 const INTERVAL_CHOICES_MS = [500, 1000, 1500, 2000];
 const SHUTTER_CHOICES = [500, 1000, 1500];
-const FREE_PHOTO_LIMIT = 200;
+/** Fotos gravadas no free; a partir da 51ª é necessário Premium (ver paywall). */
+const FREE_PHOTO_LIMIT = 50;
 
 /** Android: notificação + FGS tipo camera — OEMs (ex.: Motorola) costumam respeitar mais que só keep-awake. */
 async function activateAndroidCaptureKeepAlive() {
@@ -153,6 +153,8 @@ export default function App() {
   const cullNoPeopleRef = useRef(true);
   const cullBlurRef = useRef(false);
   const intervalMsRef = useRef(1000);
+  const isPremiumRef = useRef(false);
+  const totalPhotosRef = useRef(0);
 
   const [cameraPermission, requestCameraPermission] = Camera.useCameraPermissions();
   const [locationPermission, requestLocationPermission] = Location.useForegroundPermissions();
@@ -506,6 +508,14 @@ export default function App() {
   }, [cameraIsReady]);
 
   useEffect(() => {
+    isPremiumRef.current = isPremium;
+  }, [isPremium]);
+
+  useEffect(() => {
+    totalPhotosRef.current = totalPhotos;
+  }, [totalPhotos]);
+
+  useEffect(() => {
     // Ao entrar em "Capturar", remonta o preview para pegar surface fresco (Samsung/CameraX).
     if (screen === 'capture') {
       setCameraKey((k) => k + 1);
@@ -686,9 +696,19 @@ export default function App() {
   /** Modo tempo (expo-camera) ou modo movimento na cena (CameraX nativo): fila save + EXIF. */
   function enqueueCaptureFromFileUri(srcUri, dispMs, captureMeta) {
     if (!isRunningRef.current) return;
+    if (!isPremiumRef.current && totalPhotosRef.current >= FREE_PHOTO_LIMIT) {
+      setLastError('Limite do teste grátis atingido. Assine o Premium para continuar.');
+      setShowPaywall(true);
+      stopCapture();
+      return;
+    }
     setLastError(null);
     setShotCount((c) => c + 1);
-    setTotalPhotos((n) => n + 1);
+    setTotalPhotos((n) => {
+      const next = n + 1;
+      totalPhotosRef.current = next;
+      return next;
+    });
     if (typeof dispMs === 'number' && !Number.isNaN(dispMs)) {
       setLastShotMs(dispMs);
     }
@@ -825,7 +845,7 @@ export default function App() {
   }
 
   async function startIntervalCapture() {
-    if (!isPremium && !isPromoUnlimitedFreeActive() && totalPhotos >= FREE_PHOTO_LIMIT) {
+    if (!isPremium && totalPhotos >= FREE_PHOTO_LIMIT) {
       setLastError('Limite do teste grátis atingido. Assine o Premium para continuar.');
       setShowPaywall(true);
       return;
@@ -902,7 +922,7 @@ export default function App() {
   }
 
   async function startMotionCapture() {
-    if (!isPremium && !isPromoUnlimitedFreeActive() && totalPhotos >= FREE_PHOTO_LIMIT) {
+    if (!isPremium && totalPhotos >= FREE_PHOTO_LIMIT) {
       setLastError('Limite do teste grátis atingido. Assine o Premium para continuar.');
       setShowPaywall(true);
       return;
@@ -1443,7 +1463,7 @@ export default function App() {
               </View>
             </View>
             <PaywallBar
-              visible={showPaywall && !isPremium && !isPromoUnlimitedFreeActive()}
+              visible={showPaywall && !isPremium}
               disabled={!subs?.length}
               onMonthly={() => tryBuy(IAP_SKUS.monthly)}
               onYearly={() => tryBuy(IAP_SKUS.yearly)}
@@ -1508,7 +1528,7 @@ export default function App() {
         )}
 
       <PaywallBar
-        visible={showPaywall && !isPremium && !isPromoUnlimitedFreeActive()}
+        visible={showPaywall && !isPremium}
         disabled={!subs?.length}
         onMonthly={() => tryBuy(IAP_SKUS.monthly)}
         onYearly={() => tryBuy(IAP_SKUS.yearly)}

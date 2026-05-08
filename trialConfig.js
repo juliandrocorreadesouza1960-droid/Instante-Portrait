@@ -11,12 +11,7 @@
  * Nota: quem tiver o APK ainda o pode reinstalar versões antigas; isto é barreira
  * de conveniência para testes, não protecção criptográfica.
  */
-/**
- * APK promocional: válido até fim do dia 05/06/2026 (horário de Brasília, UTC-3),
- * ~30 dias após 06/05/2026.
- * Após esse instante, `isBuildExpired()` bloqueia a app (ver `index.js`).
- */
-export const TRIAL_ENDS_AT_ISO = '2026-06-06T02:59:59.999Z';
+export const TRIAL_ENDS_AT_ISO = null;
 
 export function isBuildExpired() {
   if (TRIAL_ENDS_AT_ISO == null || String(TRIAL_ENDS_AT_ISO).trim() === '') {
@@ -27,9 +22,4 @@ export function isBuildExpired() {
     return false;
   }
   return Date.now() > end;
-}
-
-/** Enquanto o build não expirou: free “ilimitado” (sem paywall/limites de fotos). */
-export function isPromoUnlimitedFreeActive() {
-  return !isBuildExpired();
 }
