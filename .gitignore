@@ -22,6 +22,8 @@ modules/**/.gradle/
 *.apk
 *.aab
 *.jks
+*.keystore
+keystore.properties
 *.p8
 *.p12
 *.key

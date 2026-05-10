@@ -1,18 +1,20 @@
 import { registerRootComponent } from 'expo';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import App from './App';
 import { isBuildExpired } from './trialConfig';
 import { TrialExpiredScreen } from './TrialExpiredScreen';
 
-/**
- * Se o prazo em trialConfig.js tiver acabado, mostra ecrã de término e NÃO monta
- * o resto da app (evita pedir câmara, etc.).
- */
+/** Trial expirado → TrialExpiredScreen; caso contrário App (SafeAreaProvider exige-se por causa de useSafeAreaInsets em App). */
 function Root() {
   if (isBuildExpired()) {
     return <TrialExpiredScreen />;
   }
-  return <App />;
+  return (
+    <SafeAreaProvider>
+      <App />
+    </SafeAreaProvider>
+  );
 }
 
 registerRootComponent(Root);

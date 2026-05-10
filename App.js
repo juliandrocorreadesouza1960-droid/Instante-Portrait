@@ -24,7 +24,7 @@ import {
   setSnapshotIsoAsync,
 } from 'instant-portrait-exif';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
   Alert,
@@ -1100,8 +1100,7 @@ export default function App() {
   }, [screen, isCapturing, stopCapture]);
 
   return (
-    <SafeAreaProvider>
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <View style={styles.headerAccent} />
           <View style={styles.headerRow}>
@@ -1531,8 +1530,7 @@ export default function App() {
         s={styles}
       />
       <StatusBar style={effectiveTheme === 'light' ? 'dark' : 'light'} />
-      </SafeAreaView>
-    </SafeAreaProvider>
+    </SafeAreaView>
   );
 }
 
