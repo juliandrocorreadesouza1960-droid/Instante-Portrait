@@ -53,8 +53,8 @@ const UI_TIER = {
 /** Intervalo de cadência (modo Tempo) e mínimo entre disparos (modo Movimento). */
 const INTERVAL_CHOICES_MS = [500, 1000, 1500, 2000];
 const SHUTTER_CHOICES = [500, 1000, 1500];
-/** Fotos gravadas no free; a partir da 51ª é necessário Premium (ver paywall). */
-const FREE_PHOTO_LIMIT = 50;
+/** Fotos gravadas no free; a partir da (limite+1)ª é necessário Premium (ver paywall). */
+const FREE_PHOTO_LIMIT = 30;
 
 /** Android: notificação + FGS tipo camera — OEMs (ex.: Motorola) costumam respeitar mais que só keep-awake. */
 async function activateAndroidCaptureKeepAlive() {
@@ -698,7 +698,9 @@ export default function App() {
   function enqueueCaptureFromFileUri(srcUri, dispMs, captureMeta) {
     if (!isRunningRef.current) return;
     if (!isPremiumRef.current && totalPhotosRef.current >= FREE_PHOTO_LIMIT) {
-      setLastError('Limite do teste grátis atingido. Assine o Premium para continuar.');
+      setLastError(
+        `Limite do plano grátis (${FREE_PHOTO_LIMIT} fotos) atingido. Assine o Premium para continuar.`
+      );
       setShowPaywall(true);
       stopCapture();
       return;
@@ -847,7 +849,9 @@ export default function App() {
 
   async function startIntervalCapture() {
     if (!isPremium && totalPhotos >= FREE_PHOTO_LIMIT) {
-      setLastError('Limite do teste grátis atingido. Assine o Premium para continuar.');
+      setLastError(
+        `Limite do plano grátis (${FREE_PHOTO_LIMIT} fotos) atingido. Assine o Premium para continuar.`
+      );
       setShowPaywall(true);
       return;
     }
@@ -924,7 +928,9 @@ export default function App() {
 
   async function startMotionCapture() {
     if (!isPremium && totalPhotos >= FREE_PHOTO_LIMIT) {
-      setLastError('Limite do teste grátis atingido. Assine o Premium para continuar.');
+      setLastError(
+        `Limite do plano grátis (${FREE_PHOTO_LIMIT} fotos) atingido. Assine o Premium para continuar.`
+      );
       setShowPaywall(true);
       return;
     }
@@ -1106,9 +1112,29 @@ export default function App() {
           <View style={styles.headerRow}>
             <View style={styles.headerTextCol}>
               <Text style={styles.eyebrow}>AutoFrame</Text>
-              <Text style={styles.title}>
-                {mode === CAPTURE_MODES.MOTION ? t('scene') : t('interval')}
-              </Text>
+              <View style={styles.titleWithCtaRow}>
+                {screen === 'config' && !isPremium ? (
+                  <Pressable
+                    onPress={() => setShowPaywall(true)}
+                    style={({ pressed }) => [
+                      styles.configPremiumCta,
+                      pressed && styles.btnPressed,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Limite de ${FREE_PHOTO_LIMIT} fotos no free. Premium ilimitado.`}
+                  >
+                    <Text>
+                      <Text style={styles.configPremiumCtaMuted}>
+                        (limite de {FREE_PHOTO_LIMIT} fotos no free){' '}
+                      </Text>
+                      <Text style={styles.configPremiumCtaAccent}>Premium ilimitado</Text>
+                    </Text>
+                  </Pressable>
+                ) : null}
+                <Text style={styles.title} numberOfLines={2}>
+                  {mode === CAPTURE_MODES.MOTION ? t('scene') : t('interval')}
+                </Text>
+              </View>
               <Text style={styles.subtitle} numberOfLines={2}>
                 {headerCadenceLine(mode, intervalMs, motionMinIntervalMs, lang === 'en' ? 'en' : 'pt')}
               </Text>
@@ -1196,7 +1222,6 @@ export default function App() {
             >
               {!isSimpleTier ? (
                 <View style={styles.row}>
-                  <Text style={styles.label}>{t('mode')}</Text>
                   <View style={styles.pills}>
                     {[
                       { id: CAPTURE_MODES.TIME, label: t('byTime') },
@@ -1522,6 +1547,7 @@ export default function App() {
 
       <PaywallBar
         visible={showPaywall && !isPremium}
+        freePhotoLimit={FREE_PHOTO_LIMIT}
         onMonthly={() => tryBuy(IAP_SKUS.monthly)}
         onYearly={() => tryBuy(IAP_SKUS.yearly)}
         bottomInset={insets.bottom}
@@ -1536,6 +1562,7 @@ export default function App() {
 
 function PaywallBar({
   visible,
+  freePhotoLimit,
   onMonthly,
   onYearly,
   bottomInset,
@@ -1546,6 +1573,7 @@ function PaywallBar({
   if (!visible) return null;
   const padTop = Math.max(Number(topInset) || 0, 12);
   const padBottom = Math.max(Number(bottomInset) || 0, 16);
+  const n = Number(freePhotoLimit) || 0;
   return (
     <View
       style={[s.paywallOverlay, { paddingTop: padTop, paddingBottom: padBottom }]}
@@ -1553,9 +1581,9 @@ function PaywallBar({
     >
       <View style={s.paywallCardWrap}>
         <View style={s.paywallCard}>
-          <Text style={s.paywallTitle}>Limite do teste grátis atingido</Text>
+          <Text style={s.paywallTitle}>Limite do plano grátis atingido</Text>
           <Text style={s.paywallBody}>
-            Para continuar, assine o Premium.
+            No grátis são até {n} fotos. Com o Premium, captura ilimitada.
           </Text>
           {!storeProductsFound ? (
             <Text style={s.paywallHint}>
@@ -1623,7 +1651,33 @@ function makeStyles(C) {
     fontSize: 22,
     fontWeight: '800',
     letterSpacing: 0.3,
+    flexShrink: 1,
+  },
+  titleWithCtaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
     marginTop: 2,
+  },
+  configPremiumCta: {
+    flexShrink: 1,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: C.accentDim,
+    borderWidth: 1,
+    borderColor: C.accentBorder,
+  },
+  configPremiumCtaMuted: {
+    color: C.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  configPremiumCtaAccent: {
+    color: C.accent,
+    fontSize: 12,
+    fontWeight: '900',
   },
   subtitle: {
     color: C.textMuted,
