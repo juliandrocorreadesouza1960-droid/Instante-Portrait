@@ -7,7 +7,7 @@ import {
   deactivateKeepAwake,
   useKeepAwake,
 } from 'expo-keep-awake';
-import { iapEndAsync, iapGetActiveEntitlementAsync, iapInitAsync, iapLoadSubscriptionsAsync, iapRequestSubAsync, IAP_SKUS } from './iap';
+import { iapEndAsync, iapGetActiveEntitlementAsync, iapInitAsync, iapLoadSubscriptionsAsync, iapOnEntitlementChange, iapRequestSubAsync, IAP_SKUS } from './iap';
 import {
   analyzeImageAsync,
   deleteFileAsync,
@@ -415,6 +415,20 @@ export default function App() {
       } catch (_) {
         // sem billing ainda (ex.: emulador/ambiente)
       }
+      /**
+       * O `requestPurchase` da v15 é event-based: a confirmação da compra
+       * chega no `purchaseUpdatedListener` (dentro de `iap.js`), que repassa
+       * para os listeners de entitlement. Aqui fechamos o paywall e marcamos
+       * como premium assim que isso acontece — sem depender do retorno do
+       * `iapRequestSubAsync`.
+       */
+      const offEntitlement = iapOnEntitlementChange((isActive) => {
+        if (cancelled) return;
+        setIsPremium(Boolean(isActive));
+        if (isActive) setShowPaywall(false);
+      });
+      // Guardamos no closure pra desinscrever no unmount.
+      bootstrap.offEntitlement = offEntitlement;
 
       // Mantém o SharedPreferences preparado pro expo-camera (patch lê esse valor)
       try {
@@ -445,6 +459,9 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      try {
+        bootstrap.offEntitlement?.();
+      } catch (_) {}
       iapEndAsync().catch(() => null);
     };
   }, [requestCameraPermission, requestLocationPermission, settingsPath, shutterDenom]);
@@ -1017,12 +1034,19 @@ export default function App() {
   const canStart = ready && hasAllPermissions && cameraIsReady && !isCapturing;
   const canStop = isCapturing;
 
+  /**
+   * Dispara a compra da assinatura. NÃO devolve o entitlement imediatamente
+   * — o `react-native-iap@15` é event-based: o `purchaseUpdatedListener`
+   * registrado em `iap.js` vai chamar o nosso `iapOnEntitlementChange`,
+   * que atualiza `isPremium` e fecha o paywall.
+   *
+   * Aqui só lidamos com erros síncronos (SKU inválido, ofertas ausentes,
+   * billing offline, etc.). Cancelamento do usuário é tratado como fluxo
+   * normal no listener de erro do `iap.js`.
+   */
   async function tryBuy(productId) {
     try {
       await iapRequestSubAsync(productId);
-      const entitled = await iapGetActiveEntitlementAsync();
-      setIsPremium(Boolean(entitled));
-      if (entitled) setShowPaywall(false);
     } catch (e) {
       setLastError(String(e?.message ?? e));
     }
